@@ -97,6 +97,12 @@ export class Server {
       case 'paint':
         if (Array.isArray(m.ops) && m.ops.length < 400) this.broadcast({ t: 'paint', id: p.id, ops: m.ops }, p.id);
         break;
+      case 'skin':
+        // 撤销后整套涂装同步给其他人
+        if (Array.isArray(m.urls) && m.urls.length <= 8 && m.urls.every(u => typeof u === 'string' && u.startsWith('data:image/') && u.length < 200000)) {
+          this.broadcast({ t: 'psnap', id: p.id, urls: m.urls }, p.id);
+        }
+        break;
       case 'shot':
         this.broadcast({ t: 'shot', id: p.id, a: m.a, b: m.b, hit: !!m.hit }, p.id);
         break;

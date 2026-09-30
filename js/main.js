@@ -1,7 +1,7 @@
 // 变色龙躲猫猫 —— 客户端主逻辑
 import * as THREE from 'three';
 import { World, MAPS } from './world.js';
-import { Character, POSES, BASE_COLOR } from './character.js';
+import { Character, POSES, BASE_COLOR, SCALE } from './character.js';
 import { Controller } from './player.js';
 import { Server } from './server.js';
 import { hostRoom, joinRoom, offlineRoom, genRoomCode, netMode } from './net.js';
@@ -60,9 +60,12 @@ const S = {
   lobbyHunter: false,
   thirdPerson: true,
   pose: 0,
-  tool: 'brush', color: store.get('cp_color', '#7fbf7f'), size: 5,
+  tool: 'brush', color: store.get('cp_color', '#7fbf7f'), size: 4,
   recent: [],
-  orbit: { yaw: 0, pitch: 0.25, dist: 2.8 },
+  mirror: false,
+  undo: [],
+  poseMenu: false,
+  orbit: { yaw: 0, pitch: 0.25, dist: 1.8 },
   cooldownUntil: 0, tauntUntil: 0,
   chatOpen: false,
   pendingOps: [],
@@ -327,6 +330,8 @@ function applyGame(g, initial) {
 
   if (g.reset) {
     clearClones();
+    S.cloneUsed = false;
+    S.undo = [];
     for (const p of S.players.values()) p.char.resetSkin(p.role === 'hunter' && g.phase !== 'lobby');
     S.pose = 0;
   }
@@ -366,9 +371,9 @@ function onFound(m) {
   for (const [id, sc] of Object.entries(m.scores || {})) { const p = S.players.get(id); if (p) p.score = sc; }
   if (t) {
     t.alive = false;
-    poof(t.char.root.position.clone().add(new THREE.Vector3(0, 0.9, 0)));
+    poof(t.char.root.position.clone().add(new THREE.Vector3(0, 0.55, 0)));
     const cl = S.clones.get(t.id);
-    if (cl) poof(cl.root.position.clone().add(new THREE.Vector3(0, 0.9, 0)));
+    if (cl) poof(cl.root.position.clone().add(new THREE.Vector3(0, 0.55, 0)));
     removeClone(t.id);
   }
   sfx('found');
@@ -433,7 +438,10 @@ function spawnClone(m) {
   c.snapPose();
   scene.add(c.root);
   S.clones.set(m.id, c);
-  if (m.id === S.myId) toast('分身已放置！小心：分身被打中也算你被抓', 2500);
+  if (m.id === S.myId) {
+    toast('分身已放置！小心：分身被打中也算你被抓', 2500);
+    if (S.game.phase === 'hide' || S.game.phase === 'seek') S.cloneUsed = true;
+  }
   sfx('pop');
 }
 function removeClone(id) {
@@ -454,6 +462,7 @@ function placeClone() {
 // ================= 进入游戏 / 面板 =================
 function enterGame() {
   S.inGame = true;
+  clearDemo();
   $('menu').hidden = true;
   $('hud').hidden = false;
   $('roomCode').textContent = S.code;
@@ -535,7 +544,7 @@ function requestLock() {
 
 function updateOverlays() {
   if (!S.inGame) return;
-  const showPause = S.mode === 'play' && !locked() && !S.chatOpen && $('results').hidden;
+  const showPause = S.mode === 'play' && !locked() && !S.chatOpen && !S.poseMenu && $('results').hidden;
   $('pause').hidden = !showPause;
   $('paintPanel').hidden = S.mode !== 'paint';
 }
@@ -546,9 +555,13 @@ canvas.addEventListener('click', () => { if (S.mode === 'play' && !locked()) req
 function setMode(mode) {
   if (mode === 'paint' && effRole() !== 'chameleon') return;
   S.mode = mode;
+  if (S.poseMenu) { S.poseMenu = false; $('poseMenu').hidden = true; }
+  $('pickTip').hidden = true;
+  brushCursor.visible = false;
   if (mode === 'paint') {
-    S.orbit.yaw = ctrl.yaw;
-    S.orbit.pitch = 0.25;
+    // 从正面看自己，更方便涂装
+    S.orbit.yaw = ctrl.bodyYaw + Math.PI;
+    S.orbit.pitch = 0.2;
     document.exitPointerLock && document.exitPointerLock();
     refreshPaintUI();
   } else {
@@ -569,7 +582,7 @@ function setColor(c, addRecent = true, fromSliders = false) {
   store.set('cp_color', c);
   $('colorInput').value = c;
   $('colorHex').textContent = c;
-  $('colorChip').style.background = c;
+  $('swatchBig').style.background = c;
   if (addRecent) {
     S.recent = [c, ...S.recent.filter(x => x !== c)].slice(0, 16);
     store.set('cp_recent', JSON.stringify(S.recent));
@@ -606,18 +619,55 @@ function setPose(i) {
 
 function refreshPaintUI() {
   document.querySelectorAll('.tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool));
-  document.querySelectorAll('#poseBtns button').forEach((b, i) => b.classList.toggle('on', i === S.pose));
-  $('sizeVal').textContent = S.size + ' 厘米';
+  document.querySelectorAll('.sizes button').forEach(b => b.classList.toggle('on', +b.dataset.size === S.size));
+  document.querySelectorAll('#poseBtns button, #poseGrid button').forEach(b => b.classList.toggle('on', +b.dataset.pose === S.pose));
   $('sizeInput').value = S.size;
+  $('mirrorInput').checked = S.mirror;
 }
 
 document.querySelectorAll('.tools button').forEach(b => { b.onclick = () => setTool(b.dataset.tool); });
-POSES.forEach((p, i) => {
+document.querySelectorAll('.sizes button').forEach(b => { b.onclick = () => { S.size = +b.dataset.size; refreshPaintUI(); }; });
+$('mirrorInput').addEventListener('change', e => { S.mirror = e.target.checked; });
+function poseButton(p, i, big) {
   const b = document.createElement('button');
-  b.textContent = `${POSE_KEYS[i]} ${p.name}`;
-  b.onclick = () => setPose(i);
-  $('poseBtns').appendChild(b);
+  b.dataset.pose = i;
+  b.title = `${p.name}（${POSE_KEYS[i]}）`;
+  b.innerHTML = `<span class="pi"></span><span class="pn"></span>${big ? '<span class="pk"></span>' : ''}`;
+  b.querySelector('.pi').textContent = p.icon || '🧍';
+  b.querySelector('.pn').textContent = p.name;
+  if (big) b.querySelector('.pk').textContent = '按键 ' + POSE_KEYS[i];
+  return b;
+}
+POSES.forEach((p, i) => {
+  const small = poseButton(p, i, false);
+  small.onclick = () => setPose(i);
+  $('poseBtns').appendChild(small);
+  const big = poseButton(p, i, true);
+  big.onclick = () => { setPose(i); togglePoseMenu(false); };
+  $('poseGrid').appendChild(big);
 });
+
+// ---------- 姿势菜单（R） ----------
+function togglePoseMenu(on) {
+  if (on && effRole() !== 'chameleon') return;
+  S.poseMenu = on;
+  $('poseMenu').hidden = !on;
+  if (on) { document.exitPointerLock && document.exitPointerLock(); refreshPaintUI(); }
+  else if (S.mode === 'play') requestLock();
+  updateOverlays();
+}
+$('poseMenu').addEventListener('click', e => { if (e.target.id === 'poseMenu') togglePoseMenu(false); });
+
+// ---------- 颜色微调 ----------
+function shiftLightness(d) {
+  const hsl = {};
+  const c = new THREE.Color().setStyle(S.color, THREE.SRGBColorSpace);
+  c.getHSL(hsl, THREE.SRGBColorSpace);
+  c.setHSL(hsl.h, hsl.s, Math.max(0, Math.min(1, hsl.l + d)), THREE.SRGBColorSpace);
+  setColor('#' + c.getHexString(THREE.SRGBColorSpace));
+}
+$('btnDarker').onclick = () => shiftLightness(-0.07);
+$('btnLighter').onclick = () => shiftLightness(0.07);
 function hslToHex() {
   const c = new THREE.Color().setHSL(+$('hueInput').value / 360, +$('satInput').value / 100, +$('litInput').value / 100, THREE.SRGBColorSpace);
   return '#' + c.getHexString(THREE.SRGBColorSpace);
@@ -629,8 +679,25 @@ for (const id of ['hueInput', 'satInput', 'litInput']) {
 $('colorInput').addEventListener('input', e => setColor(e.target.value, false));
 $('colorInput').addEventListener('change', e => setColor(e.target.value, true));
 $('sizeInput').addEventListener('input', e => { S.size = +e.target.value; refreshPaintUI(); });
-$('btnFillAll').onclick = () => paintOp([3, 0, 0, 0, 0, 0, S.color, 0]);
-$('btnResetSkin').onclick = () => { if (confirm('清除所有涂装？')) paintOp([5, 0, 0, 0, 0, 0, BASE_COLOR, 0]); };
+$('btnFillAll').onclick = () => { pushUndo(); paintOp([3, 0, 0, 0, 0, 0, S.color, 0]); sfx('pop'); };
+$('btnResetSkin').onclick = () => { pushUndo(); paintOp([5, 0, 0, 0, 0, 0, BASE_COLOR, 0]); toast('已擦掉，可以按“撤销”恢复', 1800); };
+$('btnUndo').onclick = () => undo();
+
+// ---------- 撤销 ----------
+function pushUndo() {
+  const c = myChar();
+  if (!c) return;
+  S.undo.push(c.getSkin());
+  if (S.undo.length > 25) S.undo.shift();
+}
+function undo() {
+  const c = myChar();
+  if (!c || !S.undo.length) { toast('没有可以撤销的了', 1200); return; }
+  flushPaint();
+  c.setSkin(S.undo.pop());
+  S.send({ t: 'skin', urls: c.snapshot() });
+  sfx('pick');
+}
 $('rotL').onclick = () => { ctrl.bodyYaw += Math.PI / 12; };
 $('rotR').onclick = () => { ctrl.bodyYaw -= Math.PI / 12; };
 $('btnPaintDone').onclick = () => setMode('play');
@@ -678,32 +745,56 @@ function pickColorAt(ndc, excludeMe) {
 let lastDab = null;
 const tmpL = new THREE.Vector3();
 // 以世界坐标点为笔尖，给所有“够得着”的身体部件各生成一个本地坐标笔触
-function dabWorld(c, w, kind, r, col) {
+function dabParts(c, w, kind, r, col) {
+  const rl = r / SCALE; // 部件本地坐标中的半径（人偶被整体缩小了）
   for (const m of c.meshes) {
     const geo = m.geometry;
     if (!geo.boundingSphere) geo.computeBoundingSphere();
     tmpL.copy(w);
     m.worldToLocal(tmpL);
-    if (tmpL.distanceTo(geo.boundingSphere.center) > geo.boundingSphere.radius + r) continue;
-    paintOp([kind, m.userData.part, tmpL.x, tmpL.y, tmpL.z, r, col, (Math.random() * 1e9) | 0]);
+    if (tmpL.distanceTo(geo.boundingSphere.center) > geo.boundingSphere.radius + rl) continue;
+    paintOp([kind, m.userData.part, tmpL.x, tmpL.y, tmpL.z, rl, col, (Math.random() * 1e9) | 0]);
   }
+}
+function dabWorld(c, w, kind, r, col) {
+  dabParts(c, w, kind, r, col);
+  if (S.mirror) {
+    // 在角色自身坐标系里左右镜像
+    const m = c.root.worldToLocal(w.clone());
+    m.x = -m.x;
+    dabParts(c, c.root.localToWorld(m), kind, r, col);
+  }
+}
+
+function hitMyChar(ndc) {
+  const c = myChar();
+  if (!c) return null;
+  ray.setFromCamera(ndc, camera);
+  ray.far = 50;
+  return ray.intersectObjects(c.meshes, false)[0] || null;
 }
 
 function brushAt(ndc, first) {
   const c = myChar();
-  ray.setFromCamera(ndc, camera);
-  ray.far = 50;
-  const hits = ray.intersectObjects(c.meshes, false);
-  if (!hits.length) { lastDab = null; return; }
-  const h = hits[0];
+  const h = hitMyChar(ndc);
+  if (!h) { lastDab = null; return; }
   const col = S.color;
-  if (S.tool === 'fill') { if (first) paintOp([1, h.object.userData.part, 0, 0, 0, 0, col, 0]); return; }
+  if (S.tool === 'fill') {
+    if (first) {
+      paintOp([1, h.object.userData.part, 0, 0, 0, 0, col, 0]);
+      if (S.mirror) {
+        const mirrorPart = { 2: 3, 3: 2, 4: 5, 5: 4 }[h.object.userData.part];
+        if (mirrorPart !== undefined) paintOp([1, mirrorPart, 0, 0, 0, 0, col, 0]);
+      }
+    }
+    return;
+  }
   const kind = S.tool === 'spray' ? 2 : 0;
   const r = S.size / 100;
   const pt = h.point.clone();
-  if (lastDab && lastDab.distanceTo(pt) < 0.6) {
+  if (lastDab && lastDab.distanceTo(pt) < 0.4) {
     const d = lastDab.distanceTo(pt);
-    const spacing = Math.max(0.004, r * (kind === 2 ? 0.7 : 0.35));
+    const spacing = Math.max(0.003, r * (kind === 2 ? 0.7 : 0.35));
     if (d < spacing) return;
     const n = Math.ceil(d / spacing);
     for (let i = 1; i <= n; i++) dabWorld(c, lastDab.clone().lerp(pt, i / n), kind, r, col);
@@ -711,37 +802,97 @@ function brushAt(ndc, first) {
   lastDab = pt;
 }
 
-let painting = false, orbiting = false, lastMouse = null;
+// 笔刷预览球：鼠标停在身上时显示笔刷大小
+const brushCursor = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false }),
+);
+brushCursor.visible = false;
+brushCursor.renderOrder = 5;
+scene.add(brushCursor);
+
+function sampleAt(ndc) {
+  ray.setFromCamera(ndc, camera);
+  ray.far = 200;
+  const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(true)), false);
+  return hits.length ? sampleHit(hits[0]) : null;
+}
+
+let hoverT = 0;
+function updateHover(e) {
+  const now = performance.now();
+  if (now - hoverT < 30) return;
+  hoverT = now;
+  const ndc = mouseNDC(e);
+  const h = hitMyChar(ndc);
+  const tip = $('pickTip');
+  if (h) {
+    brushCursor.visible = S.tool !== 'fill';
+    brushCursor.position.copy(h.point);
+    brushCursor.scale.setScalar(S.size / 100);
+    brushCursor.material.color.set(S.color);
+    tip.hidden = true;
+    canvas.style.cursor = S.tool === 'fill' ? 'cell' : 'crosshair';
+    return;
+  }
+  brushCursor.visible = false;
+  const c = sampleAt(ndc);
+  if (c) {
+    tip.hidden = false;
+    tip.style.left = e.clientX + 16 + 'px';
+    tip.style.top = e.clientY + 14 + 'px';
+    $('pickTipSw').style.background = c;
+    canvas.style.cursor = 'copy';
+  } else { tip.hidden = true; canvas.style.cursor = 'grab'; }
+}
+
+// 涂装模式的鼠标：点身体=涂色；点周围=吸色；拖动空白=转视角；右键=吸色
+let painting = false, orbiting = false, pressed = null, lastMouse = null;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('pointerdown', e => {
   if (!S.inGame) return;
   if (S.mode === 'paint') {
-    if (e.button === 2 || e.button === 1) { orbiting = true; lastMouse = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); return; }
-    if (e.button !== 0) return;
     const ndc = mouseNDC(e);
-    if (S.tool === 'pick' || e.shiftKey) { pickColorAt(ndc, false); return; }
-    painting = true; lastDab = null;
+    if (e.button === 2) { pickColorAt(ndc, false); return; }
+    if (e.button === 1) { orbiting = true; lastMouse = [e.clientX, e.clientY]; canvas.setPointerCapture(e.pointerId); return; }
+    if (e.button !== 0) return;
     canvas.setPointerCapture(e.pointerId);
-    brushAt(ndc, true);
+    if (!e.shiftKey && hitMyChar(ndc)) {
+      pushUndo();
+      painting = true; lastDab = null;
+      brushAt(ndc, true);
+    } else {
+      pressed = { x: e.clientX, y: e.clientY, shift: e.shiftKey };
+      lastMouse = [e.clientX, e.clientY];
+    }
     return;
   }
-  if (locked() && e.button === 0) {
-    if (effRole() === 'hunter') shoot();
+  if (locked()) {
+    if (e.button === 0 && effRole() === 'hunter') shoot();
+    if (e.button === 2 && effRole() === 'chameleon') pickColorAt(new THREE.Vector2(0, 0), true);
   }
 });
 canvas.addEventListener('pointermove', e => {
   if (S.mode !== 'paint') return;
+  if (pressed && !orbiting && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > 5) orbiting = true;
   if (orbiting && lastMouse) {
     S.orbit.yaw -= (e.clientX - lastMouse[0]) * 0.008;
     S.orbit.pitch = Math.max(-1.2, Math.min(1.35, S.orbit.pitch + (e.clientY - lastMouse[1]) * 0.006));
     lastMouse = [e.clientX, e.clientY];
+    canvas.style.cursor = 'grabbing';
+    $('pickTip').hidden = true;
   } else if (painting) {
     brushAt(mouseNDC(e), false);
-  }
+    brushCursor.visible = false;
+  } else updateHover(e);
 });
-addEventListener('pointerup', () => { painting = false; orbiting = false; lastDab = null; });
+addEventListener('pointerup', e => {
+  if (S.mode === 'paint' && pressed && !orbiting && e.target === canvas) pickColorAt(mouseNDC(e), false);
+  painting = false; orbiting = false; pressed = null; lastDab = null;
+});
+canvas.addEventListener('pointerleave', () => { $('pickTip').hidden = true; brushCursor.visible = false; });
 canvas.addEventListener('wheel', e => {
-  if (S.mode === 'paint') S.orbit.dist = Math.max(1.2, Math.min(7, S.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9)));
+  if (S.mode === 'paint') S.orbit.dist = Math.max(0.7, Math.min(5, S.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9)));
 }, { passive: true });
 
 // ================= 输入 =================
@@ -782,16 +933,22 @@ addEventListener('keydown', e => {
   const code = e.code;
   if (code === 'Tab') { e.preventDefault(); showScoreboard(true); return; }
   if (code === 'Enter') { e.preventDefault(); openChat(); return; }
+  if (S.poseMenu) {
+    if (code === 'KeyR' || code === 'Escape') togglePoseMenu(false);
+    else if (poseKey(code) >= 0) { setPose(poseKey(code)); togglePoseMenu(false); }
+    return;
+  }
   if (S.mode === 'paint') {
+    if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); undo(); return; }
     if (code === 'KeyF' || code === 'Escape') { setMode('play'); return; }
     if (code === 'KeyB') setTool('brush');
     if (code === 'KeyN') setTool('spray');
     if (code === 'KeyK') setTool('fill');
-    if (code === 'KeyI') setTool('pick');
+    if (code === 'KeyM') { S.mirror = !S.mirror; refreshPaintUI(); }
     if (code === 'KeyQ') ctrl.bodyYaw += Math.PI / 12;
     if (code === 'KeyE') ctrl.bodyYaw -= Math.PI / 12;
     if (code === 'BracketLeft') { S.size = Math.max(1, S.size - 1); refreshPaintUI(); }
-    if (code === 'BracketRight') { S.size = Math.min(25, S.size + 1); refreshPaintUI(); }
+    if (code === 'BracketRight') { S.size = Math.min(15, S.size + 1); refreshPaintUI(); }
     if (poseKey(code) >= 0) setPose(poseKey(code));
     return;
   }
@@ -799,6 +956,7 @@ addEventListener('keydown', e => {
   if (code === 'Space') e.preventDefault();
   const role = effRole();
   if (code === 'KeyF' && role === 'chameleon') setMode('paint');
+  if (code === 'KeyR' && role === 'chameleon') togglePoseMenu(true);
   if (poseKey(code) >= 0) setPose(poseKey(code));
   if (code === 'KeyV') S.thirdPerson = !S.thirdPerson;
   if (code === 'KeyT') taunt();
@@ -834,7 +992,7 @@ function taunt() {
   if (now < S.tauntUntil) { toast(`嘲讽冷却中（${Math.ceil((S.tauntUntil - now) / 1000)} 秒）`, 1200); return; }
   S.tauntUntil = now + 10000;
   const pos = ctrl.pos;
-  S.send({ t: 'taunt', pos: [pos.x, pos.y + 1, pos.z].map(v => Math.round(v * 100) / 100) });
+  S.send({ t: 'taunt', pos: [pos.x, pos.y + 0.7, pos.z].map(v => Math.round(v * 100) / 100) });
 }
 
 // ================= 猎人射击 =================
@@ -847,7 +1005,7 @@ function shoot() {
   const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(true)), false);
   const h = hits[0];
   const dir = ray.ray.direction.clone();
-  const from = camera.position.clone().add(new THREE.Vector3(0.18, -0.15, 0).applyQuaternion(camera.quaternion));
+  const from = camera.position.clone().add(new THREE.Vector3(0.12, -0.1, 0).applyQuaternion(camera.quaternion));
   const to = h ? h.point.clone() : camera.position.clone().addScaledVector(dir, 60);
   const pid = h && h.object.userData.pid;
   const isClone = !!(h && h.object.userData.clone);
@@ -878,7 +1036,7 @@ function tracer(a, b, mine = false) {
 }
 function splat(h) {
   const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : new THREE.Vector3(0, 1, 0);
-  const m = new THREE.Mesh(new THREE.CircleGeometry(0.09, 10), new THREE.MeshBasicMaterial({ color: 0xff7b3a, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }));
+  const m = new THREE.Mesh(new THREE.CircleGeometry(0.06, 10), new THREE.MeshBasicMaterial({ color: 0xff7b3a, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4 }));
   m.position.copy(h.point).addScaledVector(n, 0.01);
   m.lookAt(h.point.clone().add(n));
   scene.add(m);
@@ -887,9 +1045,9 @@ function splat(h) {
 function poof(pos) {
   const cols = [0xffffff, 0xffeaa7, 0xff7675, 0x74b9ff];
   for (let i = 0; i < 26; i++) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), new THREE.MeshBasicMaterial({ color: cols[i % 4], transparent: true }));
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), new THREE.MeshBasicMaterial({ color: cols[i % 4], transparent: true }));
     m.position.copy(pos);
-    const v = new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 5 + 1, (Math.random() - 0.5) * 5);
+    const v = new THREE.Vector3((Math.random() - 0.5) * 4, Math.random() * 4 + 1, (Math.random() - 0.5) * 4);
     scene.add(m);
     fx.push({ obj: m, life: 1.1, max: 1.1, fade: true, vel: v });
   }
@@ -902,7 +1060,7 @@ const noteTex = (() => {
 })();
 function note(pos) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: noteTex, transparent: true, depthTest: false }));
-  s.position.copy(pos).add(new THREE.Vector3(0, 1.2, 0));
+  s.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
   s.scale.set(0.6, 0.6, 1);
   scene.add(s);
   fx.push({ obj: s, life: 1.6, max: 1.6, fade: true, vel: new THREE.Vector3(0, 0.8, 0) });
@@ -931,7 +1089,7 @@ function sendState() {
   if (!S.inGame || !S.myId) return;
   const p = ctrl.pos;
   const r = v => Math.round(v * 100) / 100;
-  S.send({ t: 'st', s: [r(p.x), r(p.y), r(p.z), r(ctrl.bodyYaw), S.pose, ctrl.moving ? 1 : 0] });
+  S.send({ t: 'st', s: [r(p.x), r(p.y), r(p.z), r(ctrl.bodyYaw), S.shownPose ?? S.pose, ctrl.moving ? 1 : 0] });
   if (!S.isHost && S.lastSnap && performance.now() - S.lastSnap > 30000) fatal('与房主失去联系', '30 秒没有收到房主的数据。');
 }
 
@@ -950,10 +1108,11 @@ function frame() {
     hudTimer -= dt;
     if (hudTimer <= 0) { hudTimer = 0.1; updateHUD(); }
   } else {
-    // 菜单背景：缓慢环绕地图
-    const t = performance.now() * 0.00005;
-    camera.position.set(Math.sin(t) * 26, 16, Math.cos(t) * 26 + 3);
-    camera.lookAt(0, 0, 3);
+    // 菜单背景：绕着客厅里的展示人偶慢慢转
+    const t = performance.now() * 0.00012;
+    camera.position.set(-7 + Math.sin(t) * 6, 2.6, -8 + Math.cos(t) * 5);
+    camera.lookAt(-7, 0.4, -8.5);
+    for (const c of demo) c.update(dt);
   }
   renderer.render(scene, camera);
 }
@@ -969,14 +1128,16 @@ function updateLocal(dt) {
     l: keys.KeyA || keys.ArrowLeft, r: keys.KeyD || keys.ArrowRight,
     jump: keys.Space, sprint: keys.ShiftLeft || keys.ShiftRight, down: keys.KeyC || keys.ControlLeft,
   } : {};
-  const speed = role === 'hunter' ? 5.2 : 4.8;
+  ctrl.setCrouch(!!(canMove && role !== 'ghost' && (keys.KeyC || keys.ControlLeft)), world);
+  const speed = role === 'hunter' ? 4.4 : 4.0;
   ctrl.update(dt, input, world, { speed, fly: role === 'ghost', frozen: !canMove });
   if (ctrl.moving && S.pose !== 0) { S.pose = 0; refreshPaintUI(); }
+  S.shownPose = ctrl.crouch ? 1 : S.pose;
 
   const c = p.char;
   c.root.position.copy(ctrl.pos);
   c.root.rotation.y = ctrl.bodyYaw;
-  c.pose = S.pose;
+  c.pose = S.shownPose;
   c.moving = ctrl.moving && ctrl.grounded;
   c.update(dt);
   const firstPerson = role === 'hunter' || (!S.thirdPerson && S.mode !== 'paint');
@@ -1016,7 +1177,7 @@ function updateCamera() {
   const pos = ctrl.pos;
   if (S.mode === 'paint') {
     const pose = POSES[S.pose];
-    const ty = pose.bodyRX ? 0.35 : (pose.hipsY !== undefined && pose.hipsY < 0.5 ? 0.6 : 0.95);
+    const ty = (pose.bodyRX ? 0.35 : (pose.hipsY !== undefined && pose.hipsY < 0.5 ? 0.6 : 0.95)) * SCALE;
     const target = tmpV.set(pos.x, pos.y + ty, pos.z);
     const { yaw, pitch, dist } = S.orbit;
     camera.position.set(
@@ -1028,19 +1189,51 @@ function updateCamera() {
     return;
   }
   camera.rotation.set(ctrl.pitch, ctrl.yaw, 0);
+  const eye = ctrl.crouch ? 0.5 : 1.0;
   if (role === 'ghost' || role === 'hunter' || !S.thirdPerson) {
-    camera.position.set(pos.x, pos.y + 1.6, pos.z);
+    camera.position.set(pos.x, pos.y + eye, pos.z);
     return;
   }
   // 第三人称：带墙体遮挡检测
-  const pivot = tmpV.set(pos.x, pos.y + 1.55, pos.z);
+  const pivot = tmpV.set(pos.x, pos.y + eye - 0.05, pos.z);
   const back = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
-  let dist = 3.4;
+  let dist = 2.4;
   ray.set(pivot, back);
   ray.far = dist;
   const hits = ray.intersectObjects(world.meshes, false);
   if (hits.length) dist = Math.max(0.3, hits[0].distance - 0.25);
   camera.position.copy(pivot).addScaledVector(back, dist);
+}
+
+const ROLE_INFO = {
+  chameleon: ['🦎', '变色龙'],
+  hunter: ['🔫', '猎人'],
+  ghost: ['👻', '观战中'],
+};
+let lastBar = '';
+function slot(key, icon, label, extra = '', cls = '') {
+  return `<div class="slot ${cls}"><span class="ky">${key}</span>${extra}<span class="ic">${icon}</span><span class="lb">${label}</span></div>`;
+}
+function updateActionBar(role) {
+  const now = performance.now();
+  let html = '';
+  if (S.mode === 'paint' || S.poseMenu) html = '';
+  else if (role === 'chameleon') {
+    const tauntCd = Math.max(0, S.tauntUntil - now) / 10000;
+    const pose = POSES[S.pose] || POSES[0];
+    html = slot('F', '🎨', '涂装') +
+      slot('R', pose.icon || '🧍', pose.name) +
+      slot('E', `<span class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(S.color) ? S.color : '#fff'}"></span>`, '吸色') +
+      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '') +
+      slot('G', '👥', S.cloneUsed ? '已用' : '分身', '', S.cloneUsed ? 'used' : '') +
+      slot('T', '📣', '嘲讽', tauntCd > 0 ? `<div class="cd" style="height:${Math.round(tauntCd * 100)}%"></div>` : '');
+  } else if (role === 'hunter') {
+    const cd = Math.max(0, S.cooldownUntil - now) / 1300;
+    html = slot('左键', '🔫', '射击', cd > 0 ? `<div class="cd" style="height:${Math.round(Math.min(1, cd) * 100)}%"></div>` : '', 'wide') +
+      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '') +
+      (S.game.phase === 'lobby' ? slot('H', '🦎', '变回') : '');
+  }
+  if (html !== lastBar) { $('actionBar').innerHTML = html; lastBar = html; }
 }
 
 function updateHUD() {
@@ -1053,30 +1246,36 @@ function updateHUD() {
   $('phaseLabel').textContent = labels[G.phase] || '';
   $('timer').textContent = G.phase === 'hide' || G.phase === 'seek' || G.phase === 'end' ? fmt(remain) : '';
   $('timer').classList.toggle('urgent', (G.phase === 'hide' || G.phase === 'seek') && remain < 10000);
+  const total = G.phase === 'hide' ? G.settings.hide * 1000 : G.phase === 'seek' ? G.settings.seek * 1000 : 0;
+  $('timeBar').classList.toggle('hidden', !total);
+  if (total) $('timeFill').style.width = Math.max(0, Math.min(100, remain / total * 100)) + '%';
   const ps = [...S.players.values()];
   const cham = ps.filter(q => q.role === 'chameleon');
-  $('aliveInfo').textContent = G.phase === 'lobby' ? `👥 ${ps.length}` : `🦎 ${cham.filter(q => q.alive).length}/${cham.length}`;
+  $('aliveInfo').textContent = G.phase === 'lobby' ? `👥 ${ps.length} 人` : `🦎 ${cham.filter(q => q.alive).length}/${cham.length}`;
 
   let hot = false;
   if (G.phase === 'seek' && role === 'chameleon') {
     for (const q of ps) if (q.role === 'hunter' && q.char.root.position.distanceTo(ctrl.pos) < 8) hot = true;
   }
-  $('hudScore').textContent = `⭐ ${p.score} 分` + (hot ? ' · 🔥 近距离加分中' : '');
+  $('hudScore').textContent = `⭐ ${p.score} 分` + (hot ? ' · 🔥 近距离加分' : '');
   $('hudScore').className = hot ? 'hot' : '';
-  const rb = $('roleBadge');
-  rb.className = role;
-  rb.textContent = { chameleon: '🦎 变色龙', hunter: '🔫 猎人', ghost: '👀 观战中' }[role];
+  $('roleCard').className = role;
+  $('roleIcon').textContent = ROLE_INFO[role][0];
+  $('roleName').textContent = ROLE_INFO[role][1] + (G.phase === 'lobby' && role === 'hunter' ? '（练习）' : '');
 
   const ch = $('crosshair');
   ch.className = role === 'hunter' ? 'hunter' + (performance.now() < S.cooldownUntil ? ' cool' : '') : '';
   ch.hidden = S.mode === 'paint' || role === 'ghost';
-  $('colorChip').hidden = role !== 'chameleon';
+  updateActionBar(role);
 
   let hint = '';
-  if (role === 'chameleon') hint = S.mode === 'paint' ? '' : 'F 涂装 · E 吸色 · 数字键 姿势 · Q 转身 · G 分身 · T 嘲讽 · V 视角 · Tab 计分板';
-  else if (role === 'hunter') hint = '左键射击 · 打空会冷却 1.3 秒' + (G.phase === 'lobby' ? ' · H 变回变色龙' : '');
-  else hint = '观战模式：WASD 飞行 · 空格上升 · C 下降';
-  if (G.phase === 'lobby' && role === 'chameleon' && hint) hint += ' · H 猎人视角';
+  if (S.mode !== 'paint') {
+    if (role === 'ghost') hint = '👻 观战模式：WASD 飞行 · 空格上升 · C 下降';
+    else if (G.phase === 'lobby') hint = role === 'hunter' ? '练习射击：看看能不能找到朋友 · Esc 打开房间菜单' : '自由练习中 · 按 H 试试猎人视角 · Esc 打开房间菜单';
+    else if (G.phase === 'hide' && role === 'chameleon') hint = '快找地方躲好，按 F 涂装伪装！';
+    else if (G.phase === 'seek' && role === 'chameleon') hint = '别动！摆好姿势，猎人正在找你……';
+    else if (G.phase === 'seek' && role === 'hunter') hint = '仔细观察，射击可疑的东西 · 打空会冷却';
+  }
   $('hint').textContent = hint;
   $('hint').hidden = !hint;
 
@@ -1087,6 +1286,31 @@ function updateHUD() {
   if ((G.phase === 'hide' || G.phase === 'seek') && sec <= 5 && sec > 0 && sec !== S.lastTick) { S.lastTick = sec; sfx('tick'); }
   updateOverlays();
 }
+
+// ================= 主菜单背景里的展示人偶 =================
+const demo = [];
+(function makeDemo() {
+  const defs = [
+    { pos: [-7.8, 0.5, -11.8], yaw: 0, pose: 2, fill: '#3b6ea5' },            // 坐在沙发上、涂成沙发蓝
+    { pos: [-6.2, 0, -8.6], yaw: Math.PI * 0.85, pose: 5, fill: null },        // 白色原色，大字
+    { pos: [-4.6, 0, -6.2], yaw: Math.PI * 1.2, pose: 4, fill: '#ff9f43' },   // 举手
+    { pos: [-9.4, 0, -5.8], yaw: Math.PI * 0.2, pose: 1, stripes: true },      // 蹲着，涂成墙纸条纹色
+  ];
+  defs.forEach((d, i) => {
+    const c = new Character('demo' + i, '');
+    c.tag.visible = false;
+    if (d.fill) c.applyOp([3, 0, 0, 0, 0, 0, d.fill, 0]);
+    if (d.stripes) { c.applyOp([3, 0, 0, 0, 0, 0, '#bfe6d0', 0]); c.applyOp([1, 1, 0, 0, 0, 0, '#eaf6ee', 0]); }
+    if (d.fill || d.stripes) c.drawFace();
+    c.root.position.set(...d.pos);
+    c.root.rotation.y = d.yaw;
+    c.pose = d.pose;
+    c.snapPose();
+    scene.add(c.root);
+    demo.push(c);
+  });
+})();
+function clearDemo() { for (const c of demo) { scene.remove(c.root); c.dispose(); } demo.length = 0; }
 
 frame();
 

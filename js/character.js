@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { mulberry32 } from './textures.js';
 
 export const TEX = 128;
+// 人偶整体缩放：小小个更好藏，也更有趣
+export const SCALE = 0.62;
 export const BASE_COLOR = '#f4f4f2';
 export const HUNTER_COLOR = '#ff7b3a';
 
@@ -32,18 +34,18 @@ export const PART_NAMES = ['头', '身体', '左臂', '右臂', '左腿', '右�
 
 // 姿势：body* 为整体变换，其余为关节欧拉角 [x, y, z]
 export const POSES = [
-  { name: '站立' },
-  { name: '蹲下', hipsY: 0.38, legL: [1.3, 0, 0.1], legR: [1.3, 0, -0.1], spine: [-0.45, 0, 0], armL: [1.1, 0, 0.25], armR: [1.1, 0, -0.25], neck: [0.35, 0, 0] },
-  { name: '坐下', hipsY: 0.1, legL: [1.52, 0, 0.06], legR: [1.52, 0, -0.06], armL: [0.25, 0, 0], armR: [0.25, 0, 0] },
-  { name: 'T 字', armL: [0, 0, -1.57], armR: [0, 0, 1.57] },
-  { name: '举手', armL: [0, 0, -2.95], armR: [0, 0, 2.95] },
-  { name: '大字', armL: [0, 0, -2.3], armR: [0, 0, 2.3], legL: [0, 0, -0.38], legR: [0, 0, 0.38] },
-  { name: '趴下', bodyRX: -1.5708, bodyY: 0.16, bodyZ: 0.9, armL: [-3.0, 0, 0], armR: [-3.0, 0, 0] },
-  { name: '平躺', bodyRX: 1.5708, bodyY: 0.16, bodyZ: -0.9 },
-  { name: '倒立', bodyRZ: Math.PI, bodyY: 1.98, armL: [0, 0, -3.05], armR: [0, 0, 3.05], legL: [0, 0, 0.15], legR: [0, 0, -0.15] },
-  { name: '抱膝', hipsY: 0.1, legL: [2.5, 0, 0.05], legR: [2.5, 0, -0.05], spine: [-0.35, 0, 0], armL: [1.9, 0, 0.35], armR: [1.9, 0, -0.35], neck: [0.3, 0, 0] },
-  { name: '单腿', legL: [0, 0, 0], legR: [-1.2, 0, 0], armL: [0, 0, -1.2], armR: [0, 0, 1.2] },
-  { name: '鞠躬', spine: [-1.2, 0, 0], armL: [0.3, 0, 0], armR: [0.3, 0, 0], neck: [0.2, 0, 0] },
+  { name: '站立', icon: '🧍' },
+  { name: '蹲下', icon: '🧎', hipsY: 0.38, legL: [1.3, 0, 0.1], legR: [1.3, 0, -0.1], spine: [-0.45, 0, 0], armL: [1.1, 0, 0.25], armR: [1.1, 0, -0.25], neck: [0.35, 0, 0] },
+  { name: '坐下', icon: '🪑', hipsY: 0.1, legL: [1.52, 0, 0.06], legR: [1.52, 0, -0.06], armL: [0.25, 0, 0], armR: [0.25, 0, 0] },
+  { name: 'T 字', icon: '✈️', armL: [0, 0, -1.57], armR: [0, 0, 1.57] },
+  { name: '举手', icon: '🙌', armL: [0, 0, -2.95], armR: [0, 0, 2.95] },
+  { name: '大字', icon: '⭐', armL: [0, 0, -2.3], armR: [0, 0, 2.3], legL: [0, 0, -0.38], legR: [0, 0, 0.38] },
+  { name: '趴下', icon: '🐊', bodyRX: -1.5708, bodyY: 0.16, bodyZ: 0.9, armL: [-3.0, 0, 0], armR: [-3.0, 0, 0] },
+  { name: '平躺', icon: '🛌', bodyRX: 1.5708, bodyY: 0.16, bodyZ: -0.9 },
+  { name: '倒立', icon: '🤸', bodyRZ: Math.PI, bodyY: 1.98, armL: [0, 0, -3.05], armR: [0, 0, 3.05], legL: [0, 0, 0.15], legR: [0, 0, -0.15] },
+  { name: '抱膝', icon: '🥚', hipsY: 0.1, legL: [2.5, 0, 0.05], legR: [2.5, 0, -0.05], spine: [-0.35, 0, 0], armL: [1.9, 0, 0.35], armR: [1.9, 0, -0.35], neck: [0.3, 0, 0] },
+  { name: '单腿', icon: '🦩', legL: [0, 0, 0], legR: [-1.2, 0, 0], armL: [0, 0, -1.2], armR: [0, 0, 1.2] },
+  { name: '鞠躬', icon: '🙇', spine: [-1.2, 0, 0], armL: [0.3, 0, 0], armR: [0.3, 0, 0], neck: [0.2, 0, 0] },
 ];
 
 // 光栅化 UV 三角形，得到“像素 -> 本地坐标”表（只保存被覆盖的像素）
@@ -141,6 +143,7 @@ export class Character {
     this.name = name;
     this.isClone = !!opts.clone;
     this.root = new THREE.Group();
+    this.root.scale.setScalar(SCALE);
     this.body = new THREE.Group();
     this.root.add(this.body);
     this.hips = new THREE.Group();
@@ -196,10 +199,11 @@ export class Character {
     this.j.head.add(this.hat);
 
     this.tag = makeNameSprite(name, '#ffffff');
-    this.tag.position.y = 2.2;
-    this.root.add(this.tag);
+    this.placeTag();
     if (this.isClone) this.tag.visible = false;
 
+    this.loading = 0;
+    this.opQueue = [];
     this.pose = 0;
     this.cur = this.targetPose(0);
     this.walkPhase = 0;
@@ -211,8 +215,20 @@ export class Character {
     this.root.remove(this.tag);
     this.tag.material.map.dispose(); this.tag.material.dispose();
     this.tag = makeNameSprite(name, color);
-    this.tag.position.y = 2.2;
+    this.placeTag();
+  }
+
+  placeTag() {
+    this.tag.position.y = 2.25;
+    this.tag.scale.set(1.2 / SCALE * 0.8, 0.3 / SCALE * 0.8, 1);
     this.root.add(this.tag);
+  }
+
+  // 撤销用：保存 / 恢复整套涂装
+  getSkin() { this.flush(); return this.imgs.map(im => new Uint8ClampedArray(im.data)); }
+  setSkin(arr) {
+    arr.forEach((d, i) => { if (this.imgs[i]) { this.imgs[i].data.set(d); this.dirty.add(i); } });
+    this.flush();
   }
 
   // ---------- 涂装 ----------
@@ -268,6 +284,7 @@ export class Character {
   // op: [kind, part, x, y, z, r, color, seed]
   // kind 0=圆刷 1=填满部件 2=喷点 3=全身填充 5=重置
   applyOp(op) {
+    if (this.loading) { this.opQueue.push(op); return; }
     const [k, p, x, y, z, r, c, s] = op;
     if (k === 5) { this.resetSkin(false); return; }
     const rgb = hexRGB(c);
@@ -306,19 +323,29 @@ export class Character {
     });
   }
 
+  // 图片解码是异步的：加载期间收到的笔触先排队，加载完再补上
   loadSnapshot(urls) {
-    urls.forEach((u, i) => {
-      if (!u || !this.ctxs[i]) return;
+    const list = urls.map((u, i) => [u, i]).filter(([u, i]) => typeof u === 'string' && this.ctxs[i]);
+    if (!list.length) return;
+    this.loading = (this.loading || 0) + list.length;
+    if (!this.opQueue) this.opQueue = [];
+    for (const [u, i] of list) {
       const img = new Image();
+      const done = () => {
+        this.loading--;
+        if (this.loading === 0) { const q = this.opQueue; this.opQueue = []; q.forEach(op => this.applyOp(op)); }
+      };
       img.onload = () => {
         const g = this.ctxs[i];
         g.clearRect(0, 0, TEX, TEX);
         g.drawImage(img, 0, 0, TEX, TEX);
         this.imgs[i] = g.getImageData(0, 0, TEX, TEX);
         this.textures[i].needsUpdate = true;
+        done();
       };
+      img.onerror = done;
       img.src = u;
-    });
+    }
   }
 
   // ---------- 姿势与动画 ----------

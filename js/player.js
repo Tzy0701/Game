@@ -1,8 +1,8 @@
 // 本地玩家的移动与碰撞（圆柱近似为方形，与地图中的轴对齐盒子碰撞）
 import * as THREE from 'three';
 
-export const R = 0.3, H = 1.75, STEP = 0.55;
-const GRAVITY = 22, JUMP = 7.2;
+export const R = 0.2, H = 1.15, CROUCH_H = 0.6, STEP = 0.52;
+const GRAVITY = 22, JUMP = 6.4;
 
 export class Controller {
   constructor() {
@@ -13,6 +13,19 @@ export class Controller {
     this.bodyYaw = 0;  // 角色朝向
     this.grounded = false;
     this.moving = false;
+    this.crouch = false;
+    this.h = H;
+  }
+
+  // 蹲下时碰撞体变矮，可以钻到桌子底下；起身前检查头顶有没有东西
+  setCrouch(want, world) {
+    if (want) { this.crouch = true; this.h = CROUCH_H; return; }
+    if (!this.crouch) return;
+    const p = this.pos;
+    const saved = this.h;
+    this.h = H;
+    if (world.colliders.some(b => this.overlaps(b, p.x, p.y + 0.01, p.z))) { this.h = saved; return; }
+    this.crouch = false;
   }
 
   teleport(x, y, z, yaw = 0) {
@@ -24,7 +37,7 @@ export class Controller {
   overlaps(b, px, py, pz) {
     return px + R > b.min[0] && px - R < b.max[0] &&
       pz + R > b.min[2] && pz - R < b.max[2] &&
-      py + H > b.min[1] && py < b.max[1];
+      py + this.h > b.min[1] && py < b.max[1];
   }
 
   // input: {f, b, l, r, jump, sprint, down}
@@ -41,7 +54,7 @@ export class Controller {
     }
     const len = Math.hypot(mx, mz);
     this.moving = len > 0;
-    const sp = speed * (input.sprint ? 1.55 : 1);
+    const sp = speed * (this.crouch ? 0.5 : input.sprint ? 1.55 : 1);
     if (len > 0) { mx = mx / len * sp; mz = mz / len * sp; }
 
     if (fly) {
@@ -111,8 +124,8 @@ export class Controller {
     this.grounded = false;
     for (const b of cols) {
       if (!this.overlaps(b, p.x, p.y, p.z)) continue;
-      if (delta > 0 && prevY + H <= b.min[1] + 0.02) {
-        p.y = b.min[1] - H - 1e-4; this.vel.y = 0;
+      if (delta > 0 && prevY + this.h <= b.min[1] + 0.02) {
+        p.y = b.min[1] - this.h - 1e-4; this.vel.y = 0;
       } else if (prevY >= b.max[1] - STEP) {
         p.y = b.max[1]; if (this.vel.y < 0) this.vel.y = 0; this.grounded = true;
       }
