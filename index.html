@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>变色龙躲猫猫 Chameleon Party</title>
+<meta name="description" content="致敬 Meccha Chameleon 的浏览器联机躲猫猫：给自己涂装伪装，躲过猎人的眼睛！">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{ "imports": { "three": "./lib/three.module.js" } }</script>
+<script src="lib/peerjs.min.js"></script>
+</head>
+<body>
+<div id="game"></div>
+
+<!-- 主菜单 -->
+<div id="menu" class="screen">
+  <div class="card">
+    <div class="logo">🦎</div>
+    <h1>变色龙躲猫猫</h1>
+    <p class="sub">CHAMELEON PARTY · 致敬《Meccha Chameleon》</p>
+    <label class="field">你的昵称<input id="nameInput" maxlength="12" placeholder="输入昵称"></label>
+    <button id="btnCreate" class="btn big primary">🏠 创建房间</button>
+    <div class="joinRow">
+      <input id="roomInput" maxlength="5" placeholder="房间码" autocomplete="off">
+      <button id="btnJoin" class="btn primary">加入房间</button>
+    </div>
+    <button id="btnPractice" class="btn ghost">🎨 单人练习（离线）</button>
+    <div id="menuMsg" class="msg"></div>
+    <details class="howto">
+      <summary>📖 玩法说明</summary>
+      <ul>
+        <li><b>变色龙</b>：用画笔给自己全身涂装，摆好姿势，融入环境！用 <kbd>吸管</kbd> 可以精确吸取墙壁、地板、家具的颜色。</li>
+        <li><b>猎人</b>：躲藏阶段会被蒙住眼睛。之后用鼠标左键射击可疑的东西——打中变色龙就算抓到，打空会有冷却惩罚。</li>
+        <li>时间结束时仍未被发现的变色龙获胜，猎人抓光所有变色龙则猎人获胜。</li>
+        <li>创建房间后把 <b>邀请链接</b> 或 <b>房间码</b> 发给朋友即可一起联机（最多 24 人）。</li>
+      </ul>
+      <table class="keys">
+        <tr><td><kbd>WASD</kbd></td><td>移动</td><td><kbd>空格</kbd></td><td>跳跃</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>奔跑</td><td><kbd>鼠标</kbd></td><td>视角</td></tr>
+        <tr><td><kbd>F</kbd></td><td>涂装模式</td><td><kbd>1-9</kbd></td><td>摆姿势</td></tr>
+        <tr><td><kbd>E</kbd></td><td>吸取准星处颜色</td><td><kbd>T</kbd></td><td>嘲讽（+分但会暴露）</td></tr>
+        <tr><td><kbd>V</kbd></td><td>切换第一/三人称</td><td><kbd>H</kbd></td><td>大厅中切换猎人视角</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>计分板</td><td><kbd>Enter</kbd></td><td>聊天</td></tr>
+      </table>
+    </details>
+  </div>
+</div>
+
+<!-- 游戏内 HUD -->
+<div id="hud" hidden>
+  <div id="topbar"><div id="phaseLabel"></div><div id="timer"></div><div id="aliveInfo"></div></div>
+  <div id="roleBadge"></div>
+  <div id="crosshair"><span></span></div>
+  <div id="feed"></div>
+  <div id="banner"></div>
+  <div id="hint"></div>
+  <div id="colorChip" title="当前颜色"></div>
+  <div id="chat"><div id="chatLog"></div><input id="chatInput" maxlength="120" placeholder="输入消息，Enter 发送，Esc 取消" hidden></div>
+</div>
+
+<!-- 暂停 / 房间面板 -->
+<div id="pause" class="screen dim" hidden>
+  <div class="card wide">
+    <div class="roomHead">
+      <div>
+        <div class="label">房间码</div>
+        <div id="roomCode" class="code">-----</div>
+      </div>
+      <div class="roomBtns">
+        <button id="btnCopyLink" class="btn">📋 复制邀请链接</button>
+        <button id="btnCopyCode" class="btn">复制房间码</button>
+      </div>
+    </div>
+    <div id="offlineNote" class="note" hidden>单人练习模式：可以自由涂装、摆姿势、熟悉地图。想和朋友玩请回主菜单“创建房间”。</div>
+    <div class="cols">
+      <div>
+        <h3>玩家 <span id="playerCount"></span></h3>
+        <ul id="playerList"></ul>
+      </div>
+      <div>
+        <h3>房间设置 <span id="hostOnly" class="muted">（仅房主可修改）</span></h3>
+        <label class="field">地图<select id="setMap"></select></label>
+        <label class="field">躲藏时间（秒）<input id="setHide" type="number" min="10" max="180" step="5"></label>
+        <label class="field">寻找时间（秒）<input id="setSeek" type="number" min="30" max="900" step="10"></label>
+        <label class="field">猎人数量<input id="setHunters" type="number" min="1" max="6"></label>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnStart" class="btn big primary">▶ 开始回合</button>
+      <button id="btnEndRound" class="btn warn" hidden>结束本回合</button>
+      <button id="btnResume" class="btn big">继续游戏</button>
+      <button id="btnLeave" class="btn ghost">离开房间</button>
+    </div>
+    <p class="muted small">点击“继续游戏”或画面锁定鼠标。按 Esc 回到这个面板。</p>
+  </div>
+</div>
+
+<!-- 涂装面板 -->
+<div id="paintPanel" hidden>
+  <h3>🎨 涂装模式</h3>
+  <div class="tools">
+    <button data-tool="brush">🖌️ 画笔 <kbd>B</kbd></button>
+    <button data-tool="spray">💨 喷点 <kbd>N</kbd></button>
+    <button data-tool="face">▦ 填满一面 <kbd>G</kbd></button>
+    <button data-tool="fill">🪣 填满部件 <kbd>K</kbd></button>
+    <button data-tool="pick">💧 吸管 <kbd>I</kbd></button>
+  </div>
+  <div class="colorRow">
+    <input type="color" id="colorInput" value="#7fbf7f">
+    <div><div id="colorHex">#7fbf7f</div><div class="muted small">Shift+左键 快速吸色</div></div>
+  </div>
+  <div id="recent"></div>
+  <label class="field">笔刷大小 <span id="sizeVal"></span><input type="range" id="sizeInput" min="2" max="32" value="8"></label>
+  <div class="row2">
+    <button id="btnFillAll" class="btn small">全身涂成当前色</button>
+    <button id="btnResetSkin" class="btn small ghost">重置涂装</button>
+  </div>
+  <h4>姿势 <span class="muted small">(数字键 1-9)</span></h4>
+  <div id="poseBtns"></div>
+  <div class="row2">
+    <button id="rotL" class="btn small">↺ 转身 <kbd>Q</kbd></button>
+    <button id="rotR" class="btn small">↻ 转身 <kbd>E</kbd></button>
+  </div>
+  <p class="muted small">左键：使用工具 · 右键拖动：旋转镜头 · 滚轮：缩放 · <kbd>[</kbd><kbd>]</kbd> 笔刷大小</p>
+  <button id="btnPaintDone" class="btn big primary">完成 <kbd>F</kbd></button>
+</div>
+
+<div id="blind" hidden>
+  <div class="blindIcon">🙈</div>
+  <div class="blindTitle">你是猎人！</div>
+  <div>变色龙们正在躲藏和涂装伪装……</div>
+  <div id="blindTimer"></div>
+</div>
+
+<div id="results" class="screen dim" hidden><div class="card" id="resultsCard"></div></div>
+<div id="scoreboard" hidden><div class="card" id="scoreCard"></div></div>
+<div id="toast"></div>
+<div id="fatal" class="screen dim" hidden><div class="card"><h2 id="fatalTitle">连接已断开</h2><p id="fatalMsg"></p><button class="btn big primary" onclick="location.reload()">返回主菜单</button></div></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
