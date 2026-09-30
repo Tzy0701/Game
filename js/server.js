@@ -72,13 +72,19 @@ export class Server {
       };
       this.conns.set(cid, id);
       this.players.set(id, np);
-      const paints = {};
-      if (this.paintProvider) for (const q of this.players.values()) { if (q.id !== id) { const s = this.paintProvider(q.id); if (s) paints[q.id] = s; } }
       this.sendConn(cid, {
         t: 'welcome', id,
         players: [...this.players.values()].map(q => this.publicPlayer(q)),
-        paints, game: this.gameMsg(),
+        game: this.gameMsg(),
       });
+      // 每个玩家的涂装单独发送，避免单条消息过大
+      if (this.paintProvider) {
+        for (const q of this.players.values()) {
+          if (q.id === id) continue;
+          const urls = this.paintProvider(q.id);
+          if (urls) this.sendConn(cid, { t: 'psnap', id: q.id, urls });
+        }
+      }
       this.broadcast({ t: 'join', p: this.publicPlayer(np) }, id);
       return;
     }
@@ -97,6 +103,15 @@ export class Server {
       case 'tag':
         this.tag(p, m.target);
         break;
+      case 'clone': {
+        const inRound = this.game.phase === 'hide' || this.game.phase === 'seek';
+        if (p.role !== 'chameleon' || !p.alive || this.game.phase === 'end') return;
+        if (inRound && p.clones >= 1) { this.sendConn(cid, { t: 'toast', text: '本回合的分身已经用掉了' }); return; }
+        if (!Array.isArray(m.pos) || m.pos.length !== 3) return;
+        if (inRound) p.clones = (p.clones || 0) + 1;
+        this.broadcast({ t: 'clone', id: p.id, pos: m.pos.map(Number), yaw: +m.yaw || 0, pose: m.pose | 0 });
+        break;
+      }
       case 'taunt': {
         const now = Date.now();
         if (p.role !== 'chameleon' || !p.alive || now - (p.lastTaunt || 0) < 10000) return;
@@ -163,7 +178,7 @@ export class Server {
     order.forEach((p, i) => {
       p.role = i < nh ? 'hunter' : 'chameleon';
       p.alive = true;
-      p.foundAt = 0;
+      p.clones = 0;
       if (p.role === 'hunter') p.huntedCount++;
       spawns[p.id] = i < nh ? 'hunter' : 'random';
     });
@@ -185,6 +200,10 @@ export class Server {
     for (const p of [...this.players.values()]) {
       if (p.cid !== LOCAL && now - p.lastSeen > 20000) { this.t.send(p.cid, { t: 'closed' }); this.drop(p.cid); }
     }
+    if (g.phase === 'seek' && now - (g.lastScoreTick || 0) >= 1000) {
+      g.lastScoreTick = now;
+      this.proximityScore();
+    }
     if (g.phase === 'hide' && now >= g.endsAt) {
       g.phase = 'seek';
       g.seekStart = now;
@@ -200,6 +219,21 @@ export class Server {
     }
   }
 
+  // 寻找阶段每秒加分：离猎人越近加得越多（致敬原作的“近距离高风险高回报”）
+  proximityScore() {
+    const ps = [...this.players.values()];
+    const hunters = ps.filter(p => p.role === 'hunter' && p.st);
+    const scores = {};
+    for (const p of ps) {
+      if (p.role !== 'chameleon' || !p.alive) continue;
+      let near = Infinity;
+      if (p.st) for (const h of hunters) near = Math.min(near, Math.hypot(h.st[0] - p.st[0], h.st[1] - p.st[1], h.st[2] - p.st[2]));
+      p.score += 1 + (near < 4 ? 4 : near < 8 ? 2 : near < 14 ? 1 : 0);
+      scores[p.id] = p.score;
+    }
+    this.broadcast({ t: 'scores', s: scores });
+  }
+
   tag(hunter, targetId) {
     const g = this.game;
     if (g.phase !== 'seek' || hunter.role !== 'hunter') return;
@@ -210,8 +244,6 @@ export class Server {
       if (d > 60) return;
     }
     t.alive = false;
-    const survived = Math.floor((Date.now() - g.seekStart) / 1000);
-    t.score += survived;
     hunter.score += 100;
     this.broadcast({ t: 'found', id: t.id, by: hunter.id, scores: { [t.id]: t.score, [hunter.id]: hunter.score } });
     this.checkRoundState();
@@ -230,11 +262,10 @@ export class Server {
   endRound(winner) {
     const g = this.game;
     const now = Date.now();
-    const survived = g.seekStart && g.phase === 'seek' ? Math.floor((now - g.seekStart) / 1000) : 0;
     const survivors = [];
     for (const p of this.players.values()) {
       if (p.role === 'chameleon' && p.alive) {
-        if (winner === 'chameleons') p.score += 100 + survived;
+        if (winner === 'chameleons') p.score += 100;
         survivors.push(p.id);
       }
     }

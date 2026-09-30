@@ -31,6 +31,8 @@
       <summary>📖 玩法说明</summary>
       <ul>
         <li><b>变色龙</b>：用画笔给自己全身涂装，摆好姿势，融入环境！用 <kbd>吸管</kbd> 可以精确吸取墙壁、地板、家具的颜色。</li>
+        <li><b>分身</b>：按 <kbd>G</kbd> 放下一个和你一模一样的分身当诱饵（每回合 1 个）。但小心——分身被打中也算你被抓！</li>
+        <li><b>越近越高分</b>：寻找阶段每秒都会加分，躲在猎人附近加得更多。</li>
         <li><b>猎人</b>：躲藏阶段会被蒙住眼睛。之后用鼠标左键射击可疑的东西——打中变色龙就算抓到，打空会有冷却惩罚。</li>
         <li>时间结束时仍未被发现的变色龙获胜，猎人抓光所有变色龙则猎人获胜。</li>
         <li>创建房间后把 <b>邀请链接</b> 或 <b>房间码</b> 发给朋友即可一起联机（最多 24 人）。</li>
@@ -38,7 +40,8 @@
       <table class="keys">
         <tr><td><kbd>WASD</kbd></td><td>移动</td><td><kbd>空格</kbd></td><td>跳跃</td></tr>
         <tr><td><kbd>Shift</kbd></td><td>奔跑</td><td><kbd>鼠标</kbd></td><td>视角</td></tr>
-        <tr><td><kbd>F</kbd></td><td>涂装模式</td><td><kbd>1-9</kbd></td><td>摆姿势</td></tr>
+        <tr><td><kbd>F</kbd></td><td>涂装模式</td><td><kbd>1-0 - =</kbd></td><td>摆姿势</td></tr>
+        <tr><td><kbd>G</kbd></td><td>放置分身</td><td><kbd>Q</kbd></td><td>原地转身</td></tr>
         <tr><td><kbd>E</kbd></td><td>吸取准星处颜色</td><td><kbd>T</kbd></td><td>嘲讽（+分但会暴露）</td></tr>
         <tr><td><kbd>V</kbd></td><td>切换第一/三人称</td><td><kbd>H</kbd></td><td>大厅中切换猎人视角</td></tr>
         <tr><td><kbd>Tab</kbd></td><td>计分板</td><td><kbd>Enter</kbd></td><td>聊天</td></tr>
@@ -51,6 +54,7 @@
 <div id="hud" hidden>
   <div id="topbar"><div id="phaseLabel"></div><div id="timer"></div><div id="aliveInfo"></div></div>
   <div id="roleBadge"></div>
+  <div id="hudScore"></div>
   <div id="crosshair"><span></span></div>
   <div id="feed"></div>
   <div id="banner"></div>
@@ -102,7 +106,6 @@
   <div class="tools">
     <button data-tool="brush">🖌️ 画笔 <kbd>B</kbd></button>
     <button data-tool="spray">💨 喷点 <kbd>N</kbd></button>
-    <button data-tool="face">▦ 填满一面 <kbd>G</kbd></button>
     <button data-tool="fill">🪣 填满部件 <kbd>K</kbd></button>
     <button data-tool="pick">💧 吸管 <kbd>I</kbd></button>
   </div>
@@ -110,13 +113,18 @@
     <input type="color" id="colorInput" value="#7fbf7f">
     <div><div id="colorHex">#7fbf7f</div><div class="muted small">Shift+左键 快速吸色</div></div>
   </div>
+  <div class="hsl">
+    <label>色相<input type="range" id="hueInput" min="0" max="360" value="120"></label>
+    <label>饱和<input type="range" id="satInput" min="0" max="100" value="40"></label>
+    <label>明暗<input type="range" id="litInput" min="0" max="100" value="60"></label>
+  </div>
   <div id="recent"></div>
-  <label class="field">笔刷大小 <span id="sizeVal"></span><input type="range" id="sizeInput" min="2" max="32" value="8"></label>
+  <label class="field">笔刷大小 <span id="sizeVal"></span><input type="range" id="sizeInput" min="1" max="25" value="5"></label>
   <div class="row2">
     <button id="btnFillAll" class="btn small">全身涂成当前色</button>
     <button id="btnResetSkin" class="btn small ghost">重置涂装</button>
   </div>
-  <h4>姿势 <span class="muted small">(数字键 1-9)</span></h4>
+  <h4>姿势 <span class="muted small">(数字键 1-0、-、=)</span></h4>
   <div id="poseBtns"></div>
   <div class="row2">
     <button id="rotL" class="btn small">↺ 转身 <kbd>Q</kbd></button>
