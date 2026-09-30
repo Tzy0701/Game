@@ -14,7 +14,7 @@ export class Server {
     this.paintProvider = null;   // (pid) => dataURL[]
     this.game = {
       phase: 'lobby', endsAt: 0, round: 0, map: 'house', seekStart: 0, result: null,
-      settings: { map: 'house', hide: 45, seek: 180, hunters: 1 },
+      settings: { map: 'house', hide: 45, seek: 180, hunters: 1, size: 40 },
     };
     transport.onConnect = () => {};
     transport.onData = (cid, m) => this.handle(cid, m);
@@ -155,6 +155,7 @@ export class Server {
     g.hide = clampNum(s.hide ?? g.hide, 10, 180, 45);
     g.seek = clampNum(s.seek ?? g.seek, 30, 900, 180);
     g.hunters = clampNum(s.hunters ?? g.hunters, 1, 6, 1);
+    g.size = clampNum(s.size ?? g.size, 30, 50, 40);
     const mapChanged = this.game.map !== g.map;
     this.game.map = g.map;
     this.broadcast(this.gameMsg({ mapChanged }));

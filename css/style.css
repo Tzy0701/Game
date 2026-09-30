@@ -23,6 +23,9 @@ kbd { display: inline-block; min-width: 1.5em; text-align: center; padding: 0 5p
 button { font: inherit; }
 
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 20; padding: 16px; overflow: auto; }
+/* 内容比屏幕高时可以正常滚动，不会被切掉顶部 */
+.screen > * { margin: auto; }
+.screen { align-items: flex-start; }
 .screen.dim { background: rgba(12, 16, 26, 0.5); backdrop-filter: blur(4px); }
 .card { background: var(--card); border-radius: var(--radius); padding: 24px 26px; width: min(440px, 100%); box-shadow: 0 24px 70px rgba(0,0,0,.35); max-height: calc(100vh - 32px); overflow: auto; }
 .card.wide { width: min(780px, 100%); }
@@ -217,3 +220,64 @@ input:disabled, select:disabled { background: #f3f4f7; color: #999; }
 #scoreboard { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 15; pointer-events: none; padding: 16px; }
 #toast { position: fixed; left: 50%; bottom: 150px; transform: translateX(-50%) translateY(10px); background: rgba(20,25,35,.9); color: #fff; padding: 10px 18px; border-radius: 12px; z-index: 30; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; font-size: 15px; max-width: calc(100% - 32px); text-align: center; }
 #toast.show { opacity: 1; transform: translateX(-50%); }
+
+/* ---------- 手机触控 ---------- */
+.touchOnly { display: none; }
+body.touch .touchOnly { display: block; }
+body.touch .deskOnly { display: none; }
+body.touch #game canvas { touch-action: none; }
+html, body { overscroll-behavior: none; }
+.row4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 8px; }
+.row4 .btn { padding: 7px 2px; font-size: 12px; }
+#actionBar { pointer-events: auto; }
+.slot { cursor: pointer; }
+body.touch .slot .ky { display: none; }
+body.touch .slot { width: 62px; height: 62px; border-radius: 14px; }
+body.touch .slot .ic { font-size: 22px; }
+body.touch .slot .lb { font-size: 11px; }
+body.touch .slot.wide { width: 62px; }
+body.touch #actionBar { bottom: calc(10px + env(safe-area-inset-bottom)); left: auto; right: 118px; transform: none; gap: 6px; max-width: calc(100% - 340px); flex-wrap: wrap-reverse; justify-content: flex-end; }
+body.touch #hint { bottom: auto; top: 76px; font-size: 12px; }
+body.touch #roleCard { transform: scale(.85); transform-origin: top left; }
+body.touch #topbar { transform: translateX(-50%) scale(.85); transform-origin: top center; min-width: 240px; }
+body.touch #feed { top: 66px; font-size: 12px; }
+body.touch #banner { font-size: 28px; }
+body.touch #banner small { font-size: 14px; }
+#touchUI { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+#joyZone { position: absolute; left: 0; bottom: 0; width: 38%; height: 62%; pointer-events: auto; touch-action: none; }
+#joyBase { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.35); left: 110px; top: calc(100% - 120px); backdrop-filter: blur(3px); }
+#joyKnob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(255,255,255,.75); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+#joyHint { position: absolute; left: 110px; bottom: 190px; transform: translateX(-50%); color: rgba(255,255,255,.8); font-size: 12px; text-align: center; text-shadow: 0 1px 3px #000; pointer-events: none; }
+#joyZone.active #joyHint { display: none; }
+.tbtn { position: absolute; pointer-events: auto; touch-action: none; width: 76px; height: 76px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); background: rgba(20,25,35,.55); color: #fff; font-size: 26px; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; backdrop-filter: blur(4px); -webkit-tap-highlight-color: transparent; }
+.tbtn small { font-size: 11px; margin-top: 3px; }
+.tbtn:active, .tbtn.down { background: rgba(255,255,255,.35); }
+#tJump { right: calc(24px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); }
+#tFire { right: calc(24px + env(safe-area-inset-right)); bottom: calc(110px + env(safe-area-inset-bottom)); width: 92px; height: 92px; font-size: 34px; background: rgba(255,123,58,.75); }
+#tMenu { top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); width: 48px; height: 48px; border-radius: 14px; font-size: 22px; }
+body.touch #paintPanel { width: 270px; padding: 10px 12px; top: 8px; bottom: 8px; right: 8px; }
+body.touch .howPaint div { font-size: 10px; }
+@media (max-width: 700px) {
+  body.touch #paintPanel { width: auto; left: 8px; top: auto; height: 46%; }
+  #joyZone { width: 50%; }
+  body.touch #actionBar { right: 104px; max-width: calc(100% - 290px); }
+}
+@media (max-height: 460px) {
+  body.touch .card { padding: 14px 16px; }
+  body.touch .menuHero .logo { font-size: 40px; }
+  body.touch .menuHero h1 { font-size: 34px; margin: 4px 0; }
+  body.touch .menuHero .sub { margin-bottom: 8px; }
+  body.touch .menuWrap { gap: 20px; }
+  body.touch .chips span { font-size: 12px; padding: 4px 10px; }
+}
+
+body.touch .keyHelp { display: none; }
+@media (max-height: 460px) {
+  body.touch .menuWrap { flex-direction: row; align-items: center; }
+  body.touch .menuHero .chips, body.touch .menuHero .sub { display: none; }
+  body.touch .menuHero { text-align: left; }
+  body.touch .menuHero h1 br { display: inline; }
+  body.touch .menuCard { width: 360px; }
+  body.touch .card .btn.big { padding: 10px 14px; font-size: 15px; }
+  body.touch .field { margin: 4px 0; }
+}

@@ -5,8 +5,10 @@ import * as THREE from 'three';
 import { mulberry32 } from './textures.js';
 
 export const TEX = 128;
-// 人偶整体缩放：小小个更好藏，也更有趣
-export const SCALE = 0.62;
+// 人偶整体缩放（相对原始 1.83 米的大小）：房主可在 30%~50% 之间调整
+let charScale = 0.4;
+export const getScale = () => charScale;
+export function setScale(s) { charScale = Math.max(0.2, Math.min(1, +s || 0.4)); }
 export const BASE_COLOR = '#f4f4f2';
 export const HUNTER_COLOR = '#ff7b3a';
 
@@ -143,7 +145,7 @@ export class Character {
     this.name = name;
     this.isClone = !!opts.clone;
     this.root = new THREE.Group();
-    this.root.scale.setScalar(SCALE);
+    this.root.scale.setScalar(charScale);
     this.body = new THREE.Group();
     this.root.add(this.body);
     this.hips = new THREE.Group();
@@ -220,8 +222,15 @@ export class Character {
 
   placeTag() {
     this.tag.position.y = 2.25;
-    this.tag.scale.set(1.2 / SCALE * 0.8, 0.3 / SCALE * 0.8, 1);
     this.root.add(this.tag);
+    this.applyScale();
+  }
+
+  applyScale() {
+    const s = this.root.scale.x;
+    if (s !== charScale) this.root.scale.setScalar(charScale);
+    // 名字标签保持差不多的屏幕大小
+    this.tag.scale.set(0.8 / charScale, 0.2 / charScale, 1);
   }
 
   // 撤销用：保存 / 恢复整套涂装

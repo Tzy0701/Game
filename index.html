@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1b1f2a">
 <title>变色龙躲猫猫 Chameleon Party</title>
 <meta name="description" content="致敬 Meccha Chameleon 的浏览器联机躲猫猫：给自己涂装伪装，躲过猎人的眼睛！">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦎</text></svg>">
@@ -36,6 +39,7 @@
         <button id="btnJoin" class="btn big blue">加入</button>
       </div>
       <button id="btnPractice" class="btn ghost">🎨 单人练习（离线）</button>
+      <div class="touchOnly note small" id="rotateTip">📱 手机建议横屏玩，体验更好</div>
       <div id="menuMsg" class="msg"></div>
       <details class="howto">
         <summary>📖 怎么玩？</summary>
@@ -63,6 +67,14 @@
   <div id="hint"></div>
   <div id="actionBar"></div>
   <div id="chat"><div id="chatLog"></div><input id="chatInput" maxlength="120" placeholder="输入消息，Enter 发送，Esc 取消" hidden></div>
+</div>
+
+<!-- ============ 手机触控 ============ -->
+<div id="touchUI" hidden>
+  <div id="joyZone"><div id="joyBase"><div id="joyKnob"></div></div><div id="joyHint">按住拖动<br>移动</div></div>
+  <button id="tFire" class="tbtn fire" hidden>🔫<small>射击</small></button>
+  <button id="tJump" class="tbtn">⤒<small>跳</small></button>
+  <button id="tMenu" class="tbtn menu" title="房间菜单">☰</button>
 </div>
 
 <!-- ============ 姿势菜单 ============ -->
@@ -99,7 +111,16 @@
           <label class="field">躲藏时间（秒）<input id="setHide" type="number" min="10" max="180" step="5"></label>
           <label class="field">寻找时间（秒）<input id="setSeek" type="number" min="30" max="900" step="10"></label>
         </div>
-        <label class="field">猎人数量<input id="setHunters" type="number" min="1" max="6"></label>
+        <div class="grid2">
+          <label class="field">猎人数量<input id="setHunters" type="number" min="1" max="6"></label>
+          <label class="field">人偶大小<select id="setSize">
+            <option value="30">30%（超迷你）</option>
+            <option value="35">35%</option>
+            <option value="40">40%（推荐）</option>
+            <option value="45">45%</option>
+            <option value="50">50%</option>
+          </select></label>
+        </div>
       </div>
     </div>
     <div class="keyHelp">
@@ -170,11 +191,14 @@
 
   <div class="sectionLabel">姿势 <span class="muted">（也可以按 R）</span></div>
   <div id="poseBtns"></div>
-  <div class="row2">
-    <button id="rotL" class="btn small">↺ 左转 <kbd>Q</kbd></button>
-    <button id="rotR" class="btn small">↻ 右转 <kbd>E</kbd></button>
+  <div class="row4">
+    <button id="rotL" class="btn small">↺ 左转</button>
+    <button id="rotR" class="btn small">↻ 右转</button>
+    <button id="zoomIn" class="btn small">🔍 放大</button>
+    <button id="zoomOut" class="btn small">🔍 缩小</button>
   </div>
-  <p class="muted small tipLine">滚轮缩放 · 右键也能吸色 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</p>
+  <p class="muted small tipLine deskOnly">滚轮缩放 · 右键也能吸色 · <kbd>Q</kbd>/<kbd>E</kbd> 转身 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</p>
+  <p class="muted small tipLine touchOnly">两指捏合缩放 · 单指拖动空白处转视角</p>
 </div>
 <div id="pickTip" hidden><span id="pickTipSw"></span><span>点击吸取</span></div>
 

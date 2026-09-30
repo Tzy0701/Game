@@ -1,7 +1,7 @@
 // 变色龙躲猫猫 —— 客户端主逻辑
 import * as THREE from 'three';
 import { World, MAPS } from './world.js';
-import { Character, POSES, BASE_COLOR, SCALE } from './character.js';
+import { Character, POSES, BASE_COLOR, getScale, setScale } from './character.js';
 import { Controller } from './player.js';
 import { Server } from './server.js';
 import { hostRoom, joinRoom, offlineRoom, genRoomCode, netMode } from './net.js';
@@ -14,9 +14,14 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
 };
 
+// 手机 / 平板：没有鼠标锁定，改用虚拟摇杆和按钮（网址加 ?touch=1 可在电脑上测试）
+const IS_TOUCH = new URLSearchParams(location.search).get('touch') === '1' ||
+  (matchMedia('(hover: none) and (pointer: coarse)').matches);
+document.body.classList.toggle('touch', IS_TOUCH);
+
 // ================= 渲染基础 =================
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -32,7 +37,7 @@ const hemi = new THREE.HemisphereLight(0xffffff, 0xb0a89a, 1.9);
 const sun = new THREE.DirectionalLight(0xfff6e8, 2.0);
 sun.position.set(-18, 32, 12);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 90 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.03;
@@ -68,6 +73,8 @@ const S = {
   orbit: { yaw: 0, pitch: 0.25, dist: 1.8 },
   cooldownUntil: 0, tauntUntil: 0,
   chatOpen: false,
+  paused: true,
+  joy: [0, 0], touchJump: false, touchCrouch: false,
   pendingOps: [],
   clones: new Map(),
   lastSnap: 0,
@@ -78,6 +85,8 @@ try { S.recent = JSON.parse(store.get('cp_recent', '[]')).slice(0, 16); } catch 
 const me = () => S.players.get(S.myId);
 const myChar = () => { const p = me(); return p && p.char; };
 const locked = () => document.pointerLockElement === canvas;
+// “正在操控角色”：电脑上是鼠标已锁定，手机上是没有打开房间菜单
+const active = () => IS_TOUCH ? !S.paused : locked();
 
 function effRole() {
   const p = me();
@@ -320,6 +329,7 @@ function applyGame(g, initial) {
   G.phase = g.phase;
   G.endsAt = performance.now() + (g.remain || 0);
   G.map = g.map; G.settings = g.settings; G.round = g.round; G.result = g.result;
+  if (g.settings) applyCharScale(g.settings.size);
   for (const gp of g.players || []) {
     const p = S.players.get(gp.id);
     if (p) { p.role = gp.role; p.alive = gp.alive; p.score = gp.score; }
@@ -371,9 +381,9 @@ function onFound(m) {
   for (const [id, sc] of Object.entries(m.scores || {})) { const p = S.players.get(id); if (p) p.score = sc; }
   if (t) {
     t.alive = false;
-    poof(t.char.root.position.clone().add(new THREE.Vector3(0, 0.55, 0)));
+    poof(t.char.root.position.clone().add(new THREE.Vector3(0, getScale(), 0)));
     const cl = S.clones.get(t.id);
-    if (cl) poof(cl.root.position.clone().add(new THREE.Vector3(0, 0.55, 0)));
+    if (cl) poof(cl.root.position.clone().add(new THREE.Vector3(0, getScale(), 0)));
     removeClone(t.id);
   }
   sfx('found');
@@ -476,7 +486,7 @@ function enterGame() {
   }
   refreshPanel();
   updateOverlays();
-  if (S.offline) toast('欢迎来到练习场！点击画面开始，按 F 进入涂装模式', 4500);
+  if (S.offline) toast(IS_TOUCH ? '欢迎来到练习场！点“继续游戏”开始，点🎨进入涂装' : '欢迎来到练习场！点击画面开始，按 F 进入涂装模式', 4500);
   else toast(S.isHost ? '房间已创建！点“复制邀请链接”发给朋友' : '已加入房间！', 4000);
   setInterval(sendState, 66);
   setInterval(flushPaint, 60);
@@ -502,7 +512,7 @@ function refreshPanel() {
   }
   const s = S.game.settings;
   const editable = S.isHost && S.game.phase === 'lobby';
-  for (const [id, v] of [['setMap', s.map], ['setHide', s.hide], ['setSeek', s.seek], ['setHunters', s.hunters]]) {
+  for (const [id, v] of [['setMap', s.map], ['setHide', s.hide], ['setSeek', s.seek], ['setHunters', s.hunters], ['setSize', s.size || 40]]) {
     const el = $(id);
     if (document.activeElement !== el) el.value = v;
     el.disabled = !editable;
@@ -514,9 +524,9 @@ function refreshPanel() {
 
 function sendSettings() {
   if (!S.isHost) return;
-  S.send({ t: 'settings', settings: { map: $('setMap').value, hide: +$('setHide').value, seek: +$('setSeek').value, hunters: +$('setHunters').value } });
+  S.send({ t: 'settings', settings: { map: $('setMap').value, hide: +$('setHide').value, seek: +$('setSeek').value, hunters: +$('setHunters').value, size: +$('setSize').value } });
 }
-for (const id of ['setMap', 'setHide', 'setSeek', 'setHunters']) $(id).addEventListener('change', sendSettings);
+for (const id of ['setMap', 'setHide', 'setSeek', 'setHunters', 'setSize']) $(id).addEventListener('change', sendSettings);
 $('btnStart').onclick = () => S.send({ t: 'start' });
 $('btnEndRound').onclick = () => { if (confirm('确定要提前结束本回合吗？')) S.send({ t: 'endRound' }); };
 $('btnResume').onclick = () => requestLock();
@@ -536,6 +546,7 @@ $('btnCopyCode').onclick = () => copy(S.code, '房间码已复制：' + S.code);
 
 function requestLock() {
   if (!S.inGame || S.mode !== 'play' || S.chatOpen) return;
+  if (IS_TOUCH) { S.paused = false; updateOverlays(); return; }
   try {
     const r = canvas.requestPointerLock();
     if (r && r.catch) r.catch(() => {});
@@ -544,12 +555,26 @@ function requestLock() {
 
 function updateOverlays() {
   if (!S.inGame) return;
-  const showPause = S.mode === 'play' && !locked() && !S.chatOpen && !S.poseMenu && $('results').hidden;
+  const showPause = S.mode === 'play' && !active() && !S.chatOpen && !S.poseMenu && $('results').hidden;
   $('pause').hidden = !showPause;
   $('paintPanel').hidden = S.mode !== 'paint';
+  if (IS_TOUCH) {
+    const playing = S.mode === 'play' && !showPause && !S.poseMenu && $('results').hidden;
+    $('touchUI').hidden = !playing;
+    $('actionBar').hidden = !playing;
+    $('tFire').hidden = effRole() !== 'hunter';
+    $('tJump').innerHTML = effRole() === 'ghost' ? '⤒<small>上升</small>' : '⤒<small>跳</small>';
+  }
+  // 涂装面板打开时，把画面中心挪到面板旁边，自己的人偶不会被挡住
+  if (S.mode === 'paint') {
+    const portrait = innerWidth <= 700;
+    const panel = $('paintPanel').getBoundingClientRect();
+    if (portrait) camera.setViewOffset(innerWidth, innerHeight, 0, panel.height / 2, innerWidth, innerHeight);
+    else camera.setViewOffset(innerWidth, innerHeight, (panel.width + 12) / 2, 0, innerWidth, innerHeight);
+  } else if (camera.view && camera.view.enabled) camera.clearViewOffset();
 }
 document.addEventListener('pointerlockchange', () => { if (locked()) { $('pause').hidden = true; } updateOverlays(); });
-canvas.addEventListener('click', () => { if (S.mode === 'play' && !locked()) requestLock(); });
+canvas.addEventListener('click', () => { if (!IS_TOUCH && S.mode === 'play' && !locked()) requestLock(); });
 
 // ================= 涂装模式 =================
 function setMode(mode) {
@@ -562,6 +587,7 @@ function setMode(mode) {
     // 从正面看自己，更方便涂装
     S.orbit.yaw = ctrl.bodyYaw + Math.PI;
     S.orbit.pitch = 0.2;
+    S.orbit.dist = 2.9 * getScale();
     document.exitPointerLock && document.exitPointerLock();
     refreshPaintUI();
   } else {
@@ -700,6 +726,8 @@ function undo() {
 }
 $('rotL').onclick = () => { ctrl.bodyYaw += Math.PI / 12; };
 $('rotR').onclick = () => { ctrl.bodyYaw -= Math.PI / 12; };
+$('zoomIn').onclick = () => zoomOrbit(0.8);
+$('zoomOut').onclick = () => zoomOrbit(1.25);
 $('btnPaintDone').onclick = () => setMode('play');
 setColor(S.color, false);
 refreshPaintUI();
@@ -733,7 +761,7 @@ function visibleCharMeshes(excludeMe) {
 function pickColorAt(ndc, excludeMe) {
   ray.setFromCamera(ndc, camera);
   ray.far = 200;
-  const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(excludeMe)), false);
+  const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(excludeMe)), false).filter(h => h.object.visible);
   if (!hits.length) return false;
   const c = sampleHit(hits[0]);
   if (!c) return false;
@@ -744,9 +772,23 @@ function pickColorAt(ndc, excludeMe) {
 
 let lastDab = null;
 const tmpL = new THREE.Vector3();
+// 笔刷大小按人偶大小换算（“中”号约等于手臂粗细）
+const brushRadius = () => S.size / 100 * getScale() / 0.62;
+
+// 人偶大小（房主设置）
+function applyCharScale(pct) {
+  const s = Math.max(0.3, Math.min(0.5, (+pct || 40) / 100));
+  if (Math.abs(s - getScale()) < 1e-6 && ctrl.H) { ctrl.setScale(s); return; }
+  setScale(s);
+  ctrl.setScale(s);
+  for (const p of S.players.values()) p.char.applyScale();
+  for (const c of S.clones.values()) c.applyScale();
+  for (const c of demo) c.applyScale();
+  S.orbit.dist = 2.9 * s;
+}
 // 以世界坐标点为笔尖，给所有“够得着”的身体部件各生成一个本地坐标笔触
 function dabParts(c, w, kind, r, col) {
-  const rl = r / SCALE; // 部件本地坐标中的半径（人偶被整体缩小了）
+  const rl = r / getScale(); // 部件本地坐标中的半径（人偶被整体缩小了）
   for (const m of c.meshes) {
     const geo = m.geometry;
     if (!geo.boundingSphere) geo.computeBoundingSphere();
@@ -790,7 +832,7 @@ function brushAt(ndc, first) {
     return;
   }
   const kind = S.tool === 'spray' ? 2 : 0;
-  const r = S.size / 100;
+  const r = brushRadius();
   const pt = h.point.clone();
   if (lastDab && lastDab.distanceTo(pt) < 0.4) {
     const d = lastDab.distanceTo(pt);
@@ -814,7 +856,7 @@ scene.add(brushCursor);
 function sampleAt(ndc) {
   ray.setFromCamera(ndc, camera);
   ray.far = 200;
-  const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(true)), false);
+  const hits = ray.intersectObjects(world.meshes.concat(visibleCharMeshes(true)), false).filter(h => h.object.visible);
   return hits.length ? sampleHit(hits[0]) : null;
 }
 
@@ -829,7 +871,7 @@ function updateHover(e) {
   if (h) {
     brushCursor.visible = S.tool !== 'fill';
     brushCursor.position.copy(h.point);
-    brushCursor.scale.setScalar(S.size / 100);
+    brushCursor.scale.setScalar(brushRadius());
     brushCursor.material.color.set(S.color);
     tip.hidden = true;
     canvas.style.cursor = S.tool === 'fill' ? 'cell' : 'crosshair';
@@ -851,6 +893,18 @@ let painting = false, orbiting = false, pressed = null, lastMouse = null;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('pointerdown', e => {
   if (!S.inGame) return;
+  if (S.mode === 'play' && IS_TOUCH) { touchLookStart(e); return; }
+  if (S.mode === 'paint' && e.pointerType === 'touch') {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 2) {
+      // 第二根手指按下：取消当前笔画，改为缩放
+      if (painting) undo();
+      painting = false; orbiting = false; pressed = null;
+      pinch = { d: pinchDist(), dist: S.orbit.dist };
+      return;
+    }
+    if (touches.size > 2) return;
+  }
   if (S.mode === 'paint') {
     const ndc = mouseNDC(e);
     if (e.button === 2) { pickColorAt(ndc, false); return; }
@@ -874,6 +928,15 @@ canvas.addEventListener('pointerdown', e => {
 });
 canvas.addEventListener('pointermove', e => {
   if (S.mode !== 'paint') return;
+  if (touches.has(e.pointerId)) {
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && touches.size === 2) {
+      const s = getScale();
+      S.orbit.dist = Math.max(0.9 * s, Math.min(9 * s, pinch.dist * pinch.d / Math.max(10, pinchDist())));
+      return;
+    }
+  }
+  if (pinch) return;
   if (pressed && !orbiting && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > 5) orbiting = true;
   if (orbiting && lastMouse) {
     S.orbit.yaw -= (e.clientX - lastMouse[0]) * 0.008;
@@ -886,14 +949,113 @@ canvas.addEventListener('pointermove', e => {
     brushCursor.visible = false;
   } else updateHover(e);
 });
-addEventListener('pointerup', e => {
-  if (S.mode === 'paint' && pressed && !orbiting && e.target === canvas) pickColorAt(mouseNDC(e), false);
+function paintPointerEnd(e) {
+  touches.delete(e.pointerId);
+  if (pinch) { if (touches.size === 0) pinch = null; return; }
+  if (S.mode === 'paint' && pressed && !orbiting && e.target === canvas && e.type === 'pointerup') pickColorAt(mouseNDC(e), false);
   painting = false; orbiting = false; pressed = null; lastDab = null;
-});
+  if (e.pointerType === 'touch') brushCursor.visible = false;
+}
+addEventListener('pointerup', paintPointerEnd);
+addEventListener('pointercancel', paintPointerEnd);
 canvas.addEventListener('pointerleave', () => { $('pickTip').hidden = true; brushCursor.visible = false; });
+function zoomOrbit(f) { const s = getScale(); S.orbit.dist = Math.max(0.9 * s, Math.min(9 * s, S.orbit.dist * f)); }
 canvas.addEventListener('wheel', e => {
-  if (S.mode === 'paint') S.orbit.dist = Math.max(0.7, Math.min(5, S.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9)));
+  if (S.mode === 'paint') zoomOrbit(e.deltaY > 0 ? 1.1 : 0.9);
 }, { passive: true });
+
+// ================= 通用动作（键盘和触屏按钮共用） =================
+function toggleLobbyHunter() {
+  if (S.game.phase !== 'lobby') return;
+  S.lobbyHunter = !S.lobbyHunter;
+  if (S.mode === 'paint') setMode('play');
+  toast(S.lobbyHunter ? (IS_TOUCH ? '猎人视角（练习）：点🔫射击' : '猎人视角（练习）：左键射击试试看能不能发现朋友') : '变回变色龙');
+  updateOverlays();
+}
+function doAction(act) {
+  const role = effRole();
+  switch (act) {
+    case 'paint': if (role === 'chameleon') setMode('paint'); break;
+    case 'pose': togglePoseMenu(true); break;
+    case 'pick': if (role === 'chameleon') pickColorAt(new THREE.Vector2(0, 0), true); break;
+    case 'crouch': S.touchCrouch = !S.touchCrouch; break;
+    case 'clone': placeClone(); break;
+    case 'taunt': taunt(); break;
+    case 'shoot': if (role === 'hunter') shoot(); break;
+    case 'hunterToggle': toggleLobbyHunter(); break;
+  }
+}
+$('actionBar').addEventListener('pointerdown', e => {
+  const el = e.target.closest('.slot');
+  if (!el || !el.dataset.act) return;
+  e.preventDefault();
+  e.stopPropagation();
+  doAction(el.dataset.act);
+});
+
+// ================= 手机触控：摇杆 / 滑动视角 / 按钮 =================
+const joy = { id: null, ox: 0, oy: 0 };
+const JOY_R = 55;
+function setKnob(dx, dy) { $('joyKnob').style.transform = `translate(${dx}px, ${dy}px)`; }
+$('joyZone').addEventListener('pointerdown', e => {
+  if (joy.id !== null) return;
+  e.preventDefault();
+  joy.id = e.pointerId;
+  const r = $('joyZone').getBoundingClientRect();
+  joy.ox = e.clientX; joy.oy = e.clientY;
+  $('joyBase').style.left = (e.clientX - r.left) + 'px';
+  $('joyBase').style.top = (e.clientY - r.top) + 'px';
+  $('joyZone').classList.add('active');
+  $('joyZone').setPointerCapture(e.pointerId);
+});
+$('joyZone').addEventListener('pointermove', e => {
+  if (e.pointerId !== joy.id) return;
+  let dx = e.clientX - joy.ox, dy = e.clientY - joy.oy;
+  const d = Math.hypot(dx, dy);
+  if (d > JOY_R) { dx = dx / d * JOY_R; dy = dy / d * JOY_R; }
+  setKnob(dx, dy);
+  S.joy = [dx / JOY_R, -dy / JOY_R];
+});
+function joyEnd(e) {
+  if (e.pointerId !== joy.id) return;
+  joy.id = null;
+  S.joy = [0, 0];
+  setKnob(0, 0);
+  $('joyZone').classList.remove('active');
+}
+$('joyZone').addEventListener('pointerup', joyEnd);
+$('joyZone').addEventListener('pointercancel', joyEnd);
+
+function holdButton(id, on, off) {
+  const el = $(id);
+  el.addEventListener('pointerdown', e => { e.preventDefault(); el.classList.add('down'); on(); });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(ev, () => { el.classList.remove('down'); off(); });
+}
+holdButton('tJump', () => { S.touchJump = true; }, () => { S.touchJump = false; });
+holdButton('tFire', () => { if (effRole() === 'hunter') shoot(); }, () => {});
+$('tMenu').addEventListener('pointerdown', e => { e.preventDefault(); S.paused = true; updateOverlays(); });
+
+// 屏幕其他地方：单指滑动转视角
+const look = { id: null, x: 0, y: 0 };
+function touchLookStart(e) {
+  if (!IS_TOUCH || S.mode !== 'play' || !active() || look.id !== null) return false;
+  look.id = e.pointerId; look.x = e.clientX; look.y = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+  return true;
+}
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId !== look.id) return;
+  const k = 0.006;
+  ctrl.yaw -= (e.clientX - look.x) * k;
+  ctrl.pitch = Math.max(-1.5, Math.min(1.5, ctrl.pitch - (e.clientY - look.y) * k));
+  look.x = e.clientX; look.y = e.clientY;
+});
+for (const ev of ['pointerup', 'pointercancel']) canvas.addEventListener(ev, e => { if (e.pointerId === look.id) look.id = null; });
+
+// 涂装模式：两指捏合缩放
+const touches = new Map();
+let pinch = null;
+function pinchDist() { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
 
 // ================= 输入 =================
 const keys = {};
@@ -963,10 +1125,7 @@ addEventListener('keydown', e => {
   if (code === 'KeyG') placeClone();
   if (code === 'KeyQ' && role === 'chameleon') ctrl.bodyYaw += Math.PI / 12;
   if (code === 'KeyE' && role === 'chameleon' && locked()) pickColorAt(new THREE.Vector2(0, 0), true);
-  if (code === 'KeyH' && S.game.phase === 'lobby') {
-    S.lobbyHunter = !S.lobbyHunter;
-    toast(S.lobbyHunter ? '猎人视角（练习）：左键射击试试看能不能发现朋友' : '变回变色龙');
-  }
+  if (code === 'KeyH') toggleLobbyHunter();
 });
 addEventListener('keyup', e => {
   keys[e.code] = false;
@@ -992,7 +1151,7 @@ function taunt() {
   if (now < S.tauntUntil) { toast(`嘲讽冷却中（${Math.ceil((S.tauntUntil - now) / 1000)} 秒）`, 1200); return; }
   S.tauntUntil = now + 10000;
   const pos = ctrl.pos;
-  S.send({ t: 'taunt', pos: [pos.x, pos.y + 0.7, pos.z].map(v => Math.round(v * 100) / 100) });
+  S.send({ t: 'taunt', pos: [pos.x, pos.y + ctrl.H * 0.6, pos.z].map(v => Math.round(v * 100) / 100) });
 }
 
 // ================= 猎人射击 =================
@@ -1060,7 +1219,7 @@ const noteTex = (() => {
 })();
 function note(pos) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: noteTex, transparent: true, depthTest: false }));
-  s.position.copy(pos).add(new THREE.Vector3(0, 0.6, 0));
+  s.position.copy(pos).add(new THREE.Vector3(0, getScale() * 1.2, 0));
   s.scale.set(0.6, 0.6, 1);
   scene.add(s);
   fx.push({ obj: s, life: 1.6, max: 1.6, fade: true, vel: new THREE.Vector3(0, 0.8, 0) });
@@ -1110,8 +1269,8 @@ function frame() {
   } else {
     // 菜单背景：绕着客厅里的展示人偶慢慢转
     const t = performance.now() * 0.00012;
-    camera.position.set(-7 + Math.sin(t) * 6, 2.6, -8 + Math.cos(t) * 5);
-    camera.lookAt(-7, 0.4, -8.5);
+    camera.position.set(-7 + Math.sin(t) * 4.5, 1.9, -8.5 + Math.cos(t) * 3.8);
+    camera.lookAt(-7, 0.3, -8.8);
     for (const c of demo) c.update(dt);
   }
   renderer.render(scene, camera);
@@ -1122,14 +1281,21 @@ function updateLocal(dt) {
   if (!p) return;
   const role = effRole();
   const blind = S.game.phase === 'hide' && role === 'hunter';
-  const canMove = locked() && S.mode === 'play' && !S.chatOpen && !blind;
-  const input = canMove ? {
-    f: keys.KeyW || keys.ArrowUp, b: keys.KeyS || keys.ArrowDown,
-    l: keys.KeyA || keys.ArrowLeft, r: keys.KeyD || keys.ArrowRight,
-    jump: keys.Space, sprint: keys.ShiftLeft || keys.ShiftRight, down: keys.KeyC || keys.ControlLeft,
-  } : {};
-  ctrl.setCrouch(!!(canMove && role !== 'ghost' && (keys.KeyC || keys.ControlLeft)), world);
-  const speed = role === 'hunter' ? 4.4 : 4.0;
+  const canMove = active() && S.mode === 'play' && !S.chatOpen && !S.poseMenu && !blind;
+  let input = {};
+  if (canMove && IS_TOUCH) {
+    const mag = Math.hypot(S.joy[0], S.joy[1]);
+    input = { analog: S.joy, jump: S.touchJump, sprint: mag > 0.92, down: role === 'ghost' && S.touchCrouch };
+  } else if (canMove) {
+    input = {
+      f: keys.KeyW || keys.ArrowUp, b: keys.KeyS || keys.ArrowDown,
+      l: keys.KeyA || keys.ArrowLeft, r: keys.KeyD || keys.ArrowRight,
+      jump: keys.Space, sprint: keys.ShiftLeft || keys.ShiftRight, down: keys.KeyC || keys.ControlLeft,
+    };
+  }
+  const wantCrouch = IS_TOUCH ? S.touchCrouch : (keys.KeyC || keys.ControlLeft);
+  ctrl.setCrouch(!!(canMove && role !== 'ghost' && wantCrouch), world);
+  const speed = 2.8 + 2 * getScale() + (role === 'hunter' ? 0.4 : 0);
   ctrl.update(dt, input, world, { speed, fly: role === 'ghost', frozen: !canMove });
   if (ctrl.moving && S.pose !== 0) { S.pose = 0; refreshPaintUI(); }
   S.shownPose = ctrl.crouch ? 1 : S.pose;
@@ -1172,24 +1338,33 @@ function updateRemotes(dt) {
 }
 
 const tmpV = new THREE.Vector3();
+let hiddenBlockers = [];
+function restoreBlockers() { for (const m of hiddenBlockers) m.visible = true; hiddenBlockers = []; }
 function updateCamera() {
   const role = effRole();
   const pos = ctrl.pos;
   if (S.mode === 'paint') {
     const pose = POSES[S.pose];
-    const ty = (pose.bodyRX ? 0.35 : (pose.hipsY !== undefined && pose.hipsY < 0.5 ? 0.6 : 0.95)) * SCALE;
+    const ty = (pose.bodyRX ? 0.35 : (pose.hipsY !== undefined && pose.hipsY < 0.5 ? 0.6 : 0.95)) * getScale();
     const target = tmpV.set(pos.x, pos.y + ty, pos.z);
     const { yaw, pitch, dist } = S.orbit;
-    camera.position.set(
-      target.x + Math.sin(yaw) * Math.cos(pitch) * dist,
-      target.y + Math.sin(pitch) * dist,
-      target.z + Math.cos(yaw) * Math.cos(pitch) * dist,
-    );
+    const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+    camera.position.copy(target).addScaledVector(dir, dist);
+    if (camera.position.y < 0.06) camera.position.y = 0.06;
     camera.lookAt(target);
+    // 挡在镜头和人偶之间的家具暂时隐藏，涂装时总能看清自己
+    restoreBlockers();
+    const toCam = camera.position.clone().sub(target);
+    ray.set(target, toCam.clone().normalize());
+    ray.far = toCam.length();
+    for (const h of ray.intersectObjects(world.meshes, false)) {
+      if (h.object.visible) { h.object.visible = false; hiddenBlockers.push(h.object); }
+    }
     return;
   }
+  if (hiddenBlockers.length) restoreBlockers();
   camera.rotation.set(ctrl.pitch, ctrl.yaw, 0);
-  const eye = ctrl.crouch ? 0.5 : 1.0;
+  const eye = (ctrl.crouch ? ctrl.CH : ctrl.H) * 0.86;
   if (role === 'ghost' || role === 'hunter' || !S.thirdPerson) {
     camera.position.set(pos.x, pos.y + eye, pos.z);
     return;
@@ -1197,11 +1372,11 @@ function updateCamera() {
   // 第三人称：带墙体遮挡检测
   const pivot = tmpV.set(pos.x, pos.y + eye - 0.05, pos.z);
   const back = new THREE.Vector3(0, 0, 1).applyQuaternion(camera.quaternion);
-  let dist = 2.4;
+  let dist = 1.0 + 3 * getScale();
   ray.set(pivot, back);
   ray.far = dist;
   const hits = ray.intersectObjects(world.meshes, false);
-  if (hits.length) dist = Math.max(0.3, hits[0].distance - 0.25);
+  if (hits.length) dist = Math.max(0.2, hits[0].distance - 0.2);
   camera.position.copy(pivot).addScaledVector(back, dist);
 }
 
@@ -1211,8 +1386,8 @@ const ROLE_INFO = {
   ghost: ['👻', '观战中'],
 };
 let lastBar = '';
-function slot(key, icon, label, extra = '', cls = '') {
-  return `<div class="slot ${cls}"><span class="ky">${key}</span>${extra}<span class="ic">${icon}</span><span class="lb">${label}</span></div>`;
+function slot(key, icon, label, extra = '', cls = '', act = '') {
+  return `<div class="slot ${cls}" data-act="${act}"><span class="ky">${key}</span>${extra}<span class="ic">${icon}</span><span class="lb">${label}</span></div>`;
 }
 function updateActionBar(role) {
   const now = performance.now();
@@ -1221,17 +1396,20 @@ function updateActionBar(role) {
   else if (role === 'chameleon') {
     const tauntCd = Math.max(0, S.tauntUntil - now) / 10000;
     const pose = POSES[S.pose] || POSES[0];
-    html = slot('F', '🎨', '涂装') +
-      slot('R', pose.icon || '🧍', pose.name) +
-      slot('E', `<span class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(S.color) ? S.color : '#fff'}"></span>`, '吸色') +
-      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '') +
-      slot('G', '👥', S.cloneUsed ? '已用' : '分身', '', S.cloneUsed ? 'used' : '') +
-      slot('T', '📣', '嘲讽', tauntCd > 0 ? `<div class="cd" style="height:${Math.round(tauntCd * 100)}%"></div>` : '');
+    html = slot('F', '🎨', '涂装', '', '', 'paint') +
+      slot('R', pose.icon || '🧍', pose.name, '', '', 'pose') +
+      slot('E', `<span class="sw" style="background:${/^#[0-9a-f]{6}$/i.test(S.color) ? S.color : '#fff'}"></span>`, '吸色', '', '', 'pick') +
+      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '', 'crouch') +
+      slot('G', '👥', S.cloneUsed ? '已用' : '分身', '', S.cloneUsed ? 'used' : '', 'clone') +
+      slot('T', '📣', '嘲讽', tauntCd > 0 ? `<div class="cd" style="height:${Math.round(tauntCd * 100)}%"></div>` : '', '', 'taunt') +
+      (IS_TOUCH && S.game.phase === 'lobby' ? slot('H', '🔫', '猎人', '', '', 'hunterToggle') : '');
   } else if (role === 'hunter') {
     const cd = Math.max(0, S.cooldownUntil - now) / 1300;
-    html = slot('左键', '🔫', '射击', cd > 0 ? `<div class="cd" style="height:${Math.round(Math.min(1, cd) * 100)}%"></div>` : '', 'wide') +
-      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '') +
-      (S.game.phase === 'lobby' ? slot('H', '🦎', '变回') : '');
+    html = (IS_TOUCH ? '' : slot('左键', '🔫', '射击', cd > 0 ? `<div class="cd" style="height:${Math.round(Math.min(1, cd) * 100)}%"></div>` : '', 'wide', 'shoot')) +
+      slot('C', '🧎', '蹲下', '', ctrl.crouch ? 'on' : '', 'crouch') +
+      (S.game.phase === 'lobby' ? slot('H', '🦎', '变回', '', '', 'hunterToggle') : '');
+  } else if (role === 'ghost' && IS_TOUCH) {
+    html = slot('C', '⤓', '下降', '', S.touchCrouch ? 'on' : '', 'crouch');
   }
   if (html !== lastBar) { $('actionBar').innerHTML = html; lastBar = html; }
 }
@@ -1271,7 +1449,7 @@ function updateHUD() {
   let hint = '';
   if (S.mode !== 'paint') {
     if (role === 'ghost') hint = '👻 观战模式：WASD 飞行 · 空格上升 · C 下降';
-    else if (G.phase === 'lobby') hint = role === 'hunter' ? '练习射击：看看能不能找到朋友 · Esc 打开房间菜单' : '自由练习中 · 按 H 试试猎人视角 · Esc 打开房间菜单';
+    else if (G.phase === 'lobby') hint = IS_TOUCH ? '自由练习中 · 左边摇杆移动，右边滑动转视角 · ☰ 打开房间菜单' : (role === 'hunter' ? '练习射击：看看能不能找到朋友 · Esc 打开房间菜单' : '自由练习中 · 按 H 试试猎人视角 · Esc 打开房间菜单');
     else if (G.phase === 'hide' && role === 'chameleon') hint = '快找地方躲好，按 F 涂装伪装！';
     else if (G.phase === 'seek' && role === 'chameleon') hint = '别动！摆好姿势，猎人正在找你……';
     else if (G.phase === 'seek' && role === 'hunter') hint = '仔细观察，射击可疑的东西 · 打空会冷却';
